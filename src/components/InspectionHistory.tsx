@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { ArrowLeft, History, Building2, Calendar, CheckCircle2, XCircle, AlertCircle, Search, Trash2 } from 'lucide-react';
 import { Inspection } from '../App';
+import { getInspections, getInspectionItems } from '../utils/inspectionApi';
 
 interface InspectionHistoryProps {
   inspections: Inspection[];
@@ -9,6 +10,7 @@ interface InspectionHistoryProps {
 }
 
 import { useToast } from './ToastProvider';
+import { checkInspectionComplete } from '../utils/inspectionApi';
 
 export function InspectionHistory({ inspections, onBack, onDeleteInspection }: InspectionHistoryProps) {
   const [searchTerm, setSearchTerm] = useState('');
@@ -26,46 +28,245 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection }: I
     });
   };
 
-  // Completed determination: status === 'completed' or all items are pass
-  const isComplete = (inspection: Inspection) => {
-    if (((inspection as any).status || '').toString().toLowerCase() === 'completed') return true;
-    const items = inspection.items || [];
-    if (items.length === 0) return false;
-    // Normalize status when checking to be case-insensitive and robust to missing fields
-    return items.every((it) => ((it.status || '').toString().toLowerCase() === 'pass'));
+  // Completed determination: status === 'completed' or all items are pass (works with DB rows or local objects)
+  const isComplete = (inspection: any) => {
+    const status = String(inspection.status || inspection.state || inspection.status || '').toLowerCase();
+    if (status === 'completed') return true;
+    const items = (inspection.items || []) as any[];
+    if (!Array.isArray(items) || items.length === 0) return false;
+    return items.every((it) => String(it?.status || '').toLowerCase() === 'pass');
   };
 
-  // History should show only completed inspections
-  const completedInspections = inspections.filter(isComplete);
+  // Prefer DB-sourced inspections when available for accurate counts
+  const [dbInspections, setDbInspections] = useState<Record<string, unknown>[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchAndEnrich = async () => {
+      try {
+        const items = await getInspections();
+        if (cancelled) return;
+
+        // Sequential enrichment: fetch items for each inspection and attach to row when available
+        const enriched: any[] = [];
+        for (const it of (items || [])) {
+          try {
+            const id = String(it.inspection_id || it.id || '');
+            const fetched = await getInspectionItems(id);
+            if (fetched && Array.isArray(fetched)) {
+              enriched.push({ ...it, items: fetched });
+            } else {
+              // preserve any existing items if API didn't return them
+              enriched.push({ ...it, items: it.items || [] });
+            }
+          } catch (e) {
+            enriched.push({ ...it, items: it.items || [] });
+          }
+        }
+
+        if (!cancelled) setDbInspections(enriched);
+      } catch (e) {
+        console.warn('Failed to fetch inspections for history', e);
+        if (!cancelled) setDbInspections([]);
+      }
+    };
+
+    fetchAndEnrich();
+
+    const onFocus = () => { fetchAndEnrich(); };
+    const onSaved = () => { fetchAndEnrich(); };
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('inspectionSaved', onSaved as EventListener);
+
+    return () => { cancelled = true; window.removeEventListener('focus', onFocus); window.removeEventListener('inspectionSaved', onSaved as EventListener); };
+  }, []);
+
+  const sourceInspections: any[] = (dbInspections && dbInspections.length > 0) ? dbInspections : inspections;
+
+  // Compute a completion map (reuse same logic as InspectorHome: status, items, or server check)
+  const [completedMap, setCompletedMap] = useState<Record<string, boolean>>({});
+  const [checkingComplete, setCheckingComplete] = useState(true);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setCheckingComplete(true);
+      const map: Record<string, boolean> = {};
+      for (const it of sourceInspections) {
+        try {
+          const id = String(it.inspection_id || it.id || '');
+          if (!id) continue;
+          const status = String(it.status || it.state || '').toLowerCase();
+          if (status === 'completed') { map[id] = true; continue; }
+
+          const items = (it.items || []) as any[];
+          if (Array.isArray(items) && items.length > 0) {
+            map[id] = items.every((i) => String(i?.status || '').toLowerCase() === 'pass');
+            if (map[id]) continue;
+          }
+
+          const venueId = String(it.venueId || it.venue_id || it.venue || '');
+          if (!venueId) { map[id] = false; continue; }
+
+          try {
+            const c = await checkInspectionComplete(id, venueId);
+            map[id] = !!(c && c.complete === true);
+          } catch (e) {
+            map[id] = false;
+          }
+        } catch (e) {
+          // Resilient: ignore and move on
+        }
+      }
+      if (!cancelled) {
+        setCompletedMap(map);
+        setCheckingComplete(false);
+        console.log('[History] sourceInspections:', sourceInspections.length, 'completedMapCount:', Object.values(map).filter(Boolean).length, 'completedIds:', Object.keys(map).filter(k => map[k]));
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [sourceInspections]);
+
+  // History should show only completed inspections (based on status, items, or server check)
+  const completedInspections = sourceInspections.filter((inspection: any) => {
+    const id = String(inspection.inspection_id || inspection.id || '');
+    if (isComplete(inspection)) return true;
+    if (id && completedMap[id]) return true;
+    return false;
+  });
 
   const handleDelete = async (inspectionId: string) => {
     // Deleting from history is not allowed for completed inspections (immutable)
     show('Completed inspections cannot be deleted from history', { variant: 'error' });
   };
 
-  const filteredInspections = completedInspections.filter((inspection) => {
-    // Search filter
+  const filteredInspections = completedInspections.filter((inspection: any) => {
     const searchLower = searchTerm.toLowerCase();
+    const venueName = String(inspection.venueName || inspection.venue_name || inspection.venue || '').toLowerCase();
+    const roomName = String(inspection.roomName || inspection.room_name || inspection.room || '').toLowerCase();
+    const inspectorName = String(inspection.inspectorName || inspection.created_by || inspection.inspector_name || inspection.createdBy || '').toLowerCase();
+
     const matchesSearch =
-      inspection.venueName.toLowerCase().includes(searchLower) ||
-      inspection.roomName.toLowerCase().includes(searchLower) ||
-      inspection.inspectorName.toLowerCase().includes(searchLower);
+      venueName.includes(searchLower) ||
+      roomName.includes(searchLower) ||
+      inspectorName.includes(searchLower);
 
     if (!matchesSearch) return false;
 
     // Type filter
     if (filterType === 'all') return true;
-    const failedItems = inspection.items.filter((i) => i.status === 'fail').length;
+    const rawItems = (inspection.items || []) as any[];
+    const items = rawItems.filter((it) => it && (it.itemId || it.id || it.item || it.ItemId));
+    const failedItems = items.filter((i: any) => String(i?.status || '').toLowerCase() === 'fail').length;
     if (filterType === 'failed') return failedItems > 0;
     if (filterType === 'passed') return failedItems === 0;
 
     return true;
   });
 
-  // Sort by most recent first
-  const sortedInspections = [...filteredInspections].sort(
-    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-  );
+  // Sort by most recent first (defensive timestamp handling)
+  const sortedInspections = [...filteredInspections].sort((a: any, b: any) => {
+    const aTs = String(a.timestamp || a.created_at || a.createdAt || a.updatedAt || a.updated_at || '');
+    const bTs = String(b.timestamp || b.created_at || b.createdAt || b.updatedAt || b.updated_at || '');
+    return new Date(bTs).getTime() - new Date(aTs).getTime();
+  });
+
+  // Render list using normalized field access
+  const renderInspectionItem = (inspection: any) => {
+    const id = String(inspection.id || inspection.inspection_id || '');
+    const rawItems = (inspection.items || []) as any[];
+    const items = rawItems.filter((it) => it && (it.itemId || it.id || it.item || it.ItemId));
+    const passedItems = items.filter((i) => String(i?.status || '').toLowerCase() === 'pass').length;
+    const failedItems = items.filter((i) => String(i?.status || '').toLowerCase() === 'fail').length;
+    const naItems = items.filter((i) => String(i?.status || '').toLowerCase() === 'na').length;
+    const totalItems = items.length;
+    const hasIssues = failedItems > 0;
+
+    const venueName = String(inspection.venueName || inspection.venue_name || inspection.venue || '');
+    const roomName = String(inspection.roomName || inspection.room_name || inspection.room || '');
+    const inspectorName = String(inspection.inspectorName || inspection.created_by || inspection.inspector_name || inspection.createdBy || '');
+    const timestamp = String(inspection.timestamp || inspection.created_at || inspection.createdAt || inspection.updatedAt || '');
+
+    return (
+      <div
+        key={id}
+        className={`border-2 rounded-lg ${hasIssues ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}
+      >
+        <div className="p-4 lg:p-6">
+          <div className="flex items-start justify-between mb-4">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-2">
+                {hasIssues ? (
+                  <AlertCircle className="w-5 h-5 lg:w-6 lg:h-6 text-red-600 flex-shrink-0" />
+                ) : (
+                  <CheckCircle2 className="w-5 h-5 lg:w-6 lg:h-6 text-green-600 flex-shrink-0" />
+                )}
+                <h3 className={`text-base lg:text-lg truncate ${hasIssues ? 'text-red-900' : 'text-green-900'}`}>
+                  {venueName}
+                </h3>
+              </div>
+              <div className="flex items-center gap-2 text-sm lg:text-base mb-2">
+                <Building2 className={`w-4 h-4 flex-shrink-0 ${hasIssues ? 'text-red-700' : 'text-green-700'}`} />
+                <span className={hasIssues ? 'text-red-700' : 'text-green-700'}>
+                  {roomName}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Stats */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+            <div className="bg-white rounded-lg p-3 border border-gray-200">
+              <div className="text-xs text-gray-600 mb-1">Total Items</div>
+              <div className="text-lg lg:text-xl text-gray-900">{totalItems}</div>
+            </div>
+            <div className="bg-white rounded-lg p-3 border border-green-200">
+              <div className="text-xs text-green-600 mb-1">Passed</div>
+              <div className="text-lg lg:text-xl text-green-700">{passedItems}</div>
+            </div>
+            <div className="bg-white rounded-lg p-3 border border-red-200">
+              <div className="text-xs text-red-600 mb-1">Failed</div>
+              <div className="text-lg lg:text-xl text-red-700">{failedItems}</div>
+            </div>
+            <div className="bg-white rounded-lg p-3 border border-gray-200">
+              <div className="text-xs text-gray-600 mb-1">N/A</div>
+              <div className="text-lg lg:text-xl text-gray-700">{naItems}</div>
+            </div>
+          </div>
+
+          {/* Metadata */}
+          <div className="space-y-2 text-xs lg:text-sm">
+            <div className={`flex items-center gap-2 ${hasIssues ? 'text-red-600' : 'text-green-600'}`}>
+              <Calendar className="w-4 h-4 flex-shrink-0" />
+              <span>{formatDate(timestamp)}</span>
+            </div>
+            <div className={`${hasIssues ? 'text-red-700' : 'text-green-700'}`}>
+              Inspector: <span className="font-medium">{inspectorName}</span>
+            </div>
+          </div>
+
+          {/* Failed Items Details */}
+          {hasIssues && (
+            <div className="mt-4 pt-4 border-t border-red-200">
+              <h4 className="text-sm text-red-900 font-medium mb-2">Issues Found:</h4>
+              <div className="space-y-1">
+                {items
+                  .filter((item) => String(item?.status || '').toLowerCase() === 'fail')
+                  .map((item, idx) => (
+                    <div key={idx} className="text-xs lg:text-sm text-red-700 flex items-start gap-2">
+                      <XCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                      <span>{String(item?.item || item?.name || '')}</span>
+                    </div>
+                  ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Completed history items are immutable — no delete button */}
+        {/* removed for now */} 
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-white">
@@ -84,7 +285,10 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection }: I
             <div>
               <h1 className="text-xl lg:text-3xl">Inspection History</h1>
               <p className="text-blue-100 text-sm lg:text-base">
-                {completedInspections.length} completed inspection{completedInspections.length !== 1 ? 's' : ''}
+                {completedInspections.length} completed inspection{completedInspections.length !== 1 ? 's' : ''} (total {sourceInspections.length})
+                {checkingComplete && (
+                  <span className="ml-3 px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">Checking completion…</span>
+                )}
               </p>
             </div>
           </div>
@@ -102,7 +306,7 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection }: I
                   placeholder="Search by venue, room, or inspector..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm lg:text-base"
+                  className="w-full pl-10 pr-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm lg:text-base placeholder:text-gray-400 text-gray-900"
                 />
               </div>
             </div>
@@ -154,100 +358,7 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection }: I
             </div>
           ) : (
             <div className="space-y-4 lg:space-y-6">
-              {sortedInspections.map((inspection) => {
-                const passedItems = inspection.items.filter((i) => i.status === 'pass').length;
-                const failedItems = inspection.items.filter((i) => i.status === 'fail').length;
-                const naItems = inspection.items.filter((i) => i.status === 'na').length;
-                const totalItems = inspection.items.length;
-                const hasIssues = failedItems > 0;
-
-                return (
-                  <div
-                    key={inspection.id}
-                    className={`border-2 rounded-lg ${
-                      hasIssues
-                        ? 'border-red-200 bg-red-50'
-                        : 'border-green-200 bg-green-50'
-                    }`}
-                  >
-                    <div className="p-4 lg:p-6">
-                      <div className="flex items-start justify-between mb-4">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-2">
-                            {hasIssues ? (
-                              <AlertCircle className="w-5 h-5 lg:w-6 lg:h-6 text-red-600 flex-shrink-0" />
-                            ) : (
-                              <CheckCircle2 className="w-5 h-5 lg:w-6 lg:h-6 text-green-600 flex-shrink-0" />
-                            )}
-                            <h3 className={`text-base lg:text-lg truncate ${hasIssues ? 'text-red-900' : 'text-green-900'}`}>
-                              {inspection.venueName}
-                            </h3>
-                          </div>
-                          <div className="flex items-center gap-2 text-sm lg:text-base mb-2">
-                            <Building2 className={`w-4 h-4 flex-shrink-0 ${hasIssues ? 'text-red-700' : 'text-green-700'}`} />
-                            <span className={hasIssues ? 'text-red-700' : 'text-green-700'}>
-                              {inspection.roomName}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Stats */}
-                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-                        <div className="bg-white rounded-lg p-3 border border-gray-200">
-                          <div className="text-xs text-gray-600 mb-1">Total Items</div>
-                          <div className="text-lg lg:text-xl text-gray-900">{totalItems}</div>
-                        </div>
-                        <div className="bg-white rounded-lg p-3 border border-green-200">
-                          <div className="text-xs text-green-600 mb-1">Passed</div>
-                          <div className="text-lg lg:text-xl text-green-700">{passedItems}</div>
-                        </div>
-                        <div className="bg-white rounded-lg p-3 border border-red-200">
-                          <div className="text-xs text-red-600 mb-1">Failed</div>
-                          <div className="text-lg lg:text-xl text-red-700">{failedItems}</div>
-                        </div>
-                        <div className="bg-white rounded-lg p-3 border border-gray-200">
-                          <div className="text-xs text-gray-600 mb-1">N/A</div>
-                          <div className="text-lg lg:text-xl text-gray-700">{naItems}</div>
-                        </div>
-                      </div>
-
-                      {/* Metadata */}
-                      <div className="space-y-2 text-xs lg:text-sm">
-                        <div className={`flex items-center gap-2 ${hasIssues ? 'text-red-600' : 'text-green-600'}`}>
-                          <Calendar className="w-4 h-4 flex-shrink-0" />
-                          <span>{formatDate(inspection.timestamp)}</span>
-                        </div>
-                        <div className={`${hasIssues ? 'text-red-700' : 'text-green-700'}`}>
-                          Inspector: <span className="font-medium">{inspection.inspectorName}</span>
-                        </div>
-                      </div>
-
-                      {/* Failed Items Details */}
-                      {hasIssues && (
-                        <div className="mt-4 pt-4 border-t border-red-200">
-                          <h4 className="text-sm text-red-900 font-medium mb-2">Issues Found:</h4>
-                          <div className="space-y-1">
-                            {inspection.items
-                              .filter((item) => item.status === 'fail')
-                              .map((item, idx) => (
-                                <div key={idx} className="text-xs lg:text-sm text-red-700 flex items-start gap-2">
-                                  <XCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                                  <span>{item.item}</span>
-                                </div>
-                              ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Completed history items are immutable — no delete button */}
-                    <div className="px-4 lg:px-6 pb-4 border-t border-opacity-30 text-sm text-gray-500">
-                      Completed — immutable
-                    </div>
-                  </div>
-                );
-              })}
+              {sortedInspections.map((inspection) => renderInspectionItem(inspection))}
             </div>
           )}
         </div>

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, CheckCircle2, XCircle, MinusCircle, Save, Camera, X } from 'lucide-react';
 import { Venue, Room, InspectionItem, Inspection } from '../App';
 import { useAuth } from '../contexts/AuthContext';
+import { getInspectionItems } from '../utils/inspectionApi';
 import { useToast } from './ToastProvider';
 
 interface InspectionFormProps {
@@ -97,16 +98,10 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
     // Otherwise, if an inspectionId exists (resuming), fetch saved items for this inspection + room
     const loadSaved = async () => {
       if (!inspectionId) return;
-      const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev';
       try {
-        const res = await fetch(API_BASE, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'get_inspection', inspection_id: inspectionId, roomId: room.id }),
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        let items = data.items || (data.body ? (JSON.parse(data.body).items || []) : []);
+        let items = await getInspectionItems(inspectionId);
+        if (!items) return;
+        items = (items as any[]).filter((it) => String(it.roomId || it.room_id || it.room || '') === String(room.id));
         if (items && items.length > 0) {
           const mapped = items.map(mapDbItem);
           setInspectionItems(mapped);

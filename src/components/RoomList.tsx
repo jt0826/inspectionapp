@@ -2,7 +2,7 @@ import React from 'react';
 import { ArrowLeft, CheckCircle2, XCircle, Clock } from 'lucide-react';
 import { Venue, Room, Inspection } from '@/App';
 import { useEffect, useState } from 'react';
-import { getInspectionSummary } from '../utils/inspectionApi';
+import { getInspectionSummary, getInspectionItems } from '../utils/inspectionApi';
 import { computeExpectedTotalsFromVenue, computeExpectedByRoomFromVenue } from '../utils/inspectionHelpers';
 
 interface RoomListProps {
@@ -60,17 +60,9 @@ export function RoomList({ venue, onRoomSelect, onBack, inspections, inspectionI
           return;
         }
 
-        // fallback: query raw items and compute
-        const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev';
-        const res = await fetch(API_BASE, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'get_inspection', inspection_id: inspectionId }),
-        });
-        if (!res.ok) return;
-        const data = await res.json();
-        const items = data.items || (data.body ? (JSON.parse(data.body).items || []) : []);
-        const map: Record<string, { pass: number; fail: number; na: number; pending: number; total: number }> = {};
+        // fallback: query raw items and compute via centralized helper
+        const items = await getInspectionItems(inspectionId) as any[];
+        if (!items) return;        const map: Record<string, { pass: number; fail: number; na: number; pending: number; total: number }> = {};
         const totals = { pass: 0, fail: 0, na: 0, pending: 0, total: 0 };
         for (const it of items) {
           const rid = it.roomId || it.room_id || it.room || '';

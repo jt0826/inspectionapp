@@ -201,16 +201,17 @@ def lambda_handler(event, context):
                     return build_response(500, {'message': 'Failed to save inspection items', 'error': str(e)})
 
             # After saving, optionally check completeness if venueId present
+            completeness = None
             try:
                 if ins.get('venueId'):
-                    completeness = None
                     try:
                         completeness = check_inspection_complete(inspection_id, ins.get('venueId'))
                     except Exception as e:
                         print('Failed to check completeness after save:', e)
+
                     # If fully complete (all PASS), mark the inspection meta as completed so it no longer appears as ongoing
-                    try:
-                        if completeness and completeness.get('complete') == True:
+                    if completeness and completeness.get('complete') == True:
+                        try:
                             meta_key = {pk_attr: inspection_id}
                             if sk_attr:
                                 meta_key[sk_attr] = '__meta__'
@@ -220,14 +221,34 @@ def lambda_handler(event, context):
                                 ExpressionAttributeNames={'#s': 'status'},
                                 ExpressionAttributeValues={':s': 'completed', ':u': now}
                             )
-                    except Exception as e:
-                        print('Failed to mark meta as completed:', e)
+                        except Exception as e:
+                            print('Failed to update meta status after save:', e)
 
-                    return build_response(200, {'message': 'Saved', 'written': written, 'complete': completeness})
+                        # Also update InspectionData status to reflect completion
+                        try:
+                            insp_data_table = dynamodb.Table('InspectionData')
+                            insp_data_table.update_item(
+                                Key={'inspection_id': inspection_id},
+                                UpdateExpression='SET #s = :s, updatedAt = :u',
+                                ExpressionAttributeNames={'#s': 'status'},
+                                ExpressionAttributeValues={':s': 'completed', ':u': now}
+                            )
+                        except Exception as e:
+                            print('Failed to update InspectionData status after save:', e)
+            except Exception as e:
+                print('Failed to mark meta as completed:', e)
+
+            # Ensure InspectionData exists/updated for this inspection and return it
+            insp_data_row = None
+            try:
+                insp_data_table = dynamodb.Table('InspectionData')
+                resp_meta = insp_data_table.get_item(Key={'inspection_id': inspection_id})
+                insp_data_row = resp_meta.get('Item')
             except Exception:
-                pass
+                insp_data_row = None
 
-            return build_response(200, {'message': 'Saved', 'written': written})
+            return build_response(200, {'message': 'Saved', 'written': written, 'complete': completeness, 'inspectionData': insp_data_row})
+
         # Save a single item (upsert) - allows saving anytime
         if action == 'save_item':
             ins = body.get('inspection') or body
@@ -301,6 +322,17 @@ def lambda_handler(event, context):
                         ReturnValues='ALL_NEW'
                     )
                     record = resp.get('Attributes')
+
+                    # Keep InspectionData metadata current for quick listing
+                    try:
+                        insp_data_table = dynamodb.Table('InspectionData')
+                        insp_data_table.update_item(
+                            Key={'inspection_id': inspection_id},
+                            UpdateExpression='SET updatedAt = :u, inspectorName = :n, venueId = :v, venueName = :vn, roomId = :r, roomName = :rn',
+                            ExpressionAttributeValues={':u': now, ':n': ins.get('inspectorName') or (ins.get('item') or {}).get('inspectorName'), ':v': ins.get('venueId'), ':vn': ins.get('venueName'), ':r': room_id, ':rn': ins.get('roomName') or (ins.get('item') or {}).get('roomName')}
+                        )
+                    except Exception as e:
+                        print('Failed to update InspectionData on save_item:', e)
                 except Exception as e:
                     print('Failed to upsert single item:', e)
                     return build_response(500, {'message': 'Failed to save item', 'error': str(e)})

@@ -1,16 +1,20 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { ClipboardCheck, Plus, History, User, Building2, LogOut, Clock, AlertCircle, CheckCircle2, XCircle, Trash2 } from 'lucide-react';
 import { Inspection } from '../App';
-import { getInspectionSummary, checkInspectionComplete } from '../utils/inspectionApi';
+import { getInspectionSummary, checkInspectionComplete, getInspectionItems } from '../utils/inspectionApi';
 import { computeExpectedTotalsFromVenue, computeExpectedByRoomFromVenue } from '../utils/inspectionHelpers';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from './ToastProvider';
 
+type Room = { id?: string; roomId?: string; items?: Record<string, unknown>[]; name?: string };
+type Venue = { id?: string; venueId?: string; name?: string; rooms?: Room[] };
+type CompletionResult = { complete?: boolean; missing?: unknown[]; total_expected?: number };
+
 interface InspectorHomeProps {
   inspections: Inspection[];
-  venues?: any[];
+  venues?: (Record<string, unknown> | Venue)[];
   onCreateNewInspection: () => void;
-  onResumeInspection: (inspection: string | any) => void;
+  onResumeInspection: (inspection: string | Record<string, unknown>) => void;
   onViewHistory: () => void;
   onViewProfile: () => void;
   onManageVenues: () => void;
@@ -30,11 +34,11 @@ export function InspectorHome({
   const { user, logout } = useAuth();
   const propsVenues = venues || [];
 
-  const [dynamoInspections, setDynamoInspections] = useState<any[]>([]);
+  const [dynamoInspections, setDynamoInspections] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingIds, setDeletingIds] = useState<string[]>([]);
   const [venuesMap, setVenuesMap] = useState<Record<string, string>>({});
-  const [inspectionSummaries, setInspectionSummaries] = useState<Record<string, any>>({});
+  const [inspectionSummaries, setInspectionSummaries] = useState<Record<string, unknown>>({});
   const [completedMap, setCompletedMap] = useState<Record<string, boolean>>({});
 
   // Local UI state for delete flow
@@ -56,20 +60,20 @@ export function InspectorHome({
 
       const data = await response.json();
       // API Gateway proxy integration often returns { statusCode, body }
-      let inspectionsArray: any[] = [];
+      let inspectionsArray: Record<string, unknown>[] = [];
 
       if (Array.isArray(data.inspections)) {
-        inspectionsArray = data.inspections;
+        inspectionsArray = data.inspections as Record<string, unknown>[];
       } else if (data.body) {
         // body may be a JSON string
         try {
           const parsed = typeof data.body === 'string' ? JSON.parse(data.body) : data.body;
-          inspectionsArray = parsed.inspections || parsed.Items || [];
+          inspectionsArray = (parsed.inspections || parsed.Items || []) as Record<string, unknown>[];
         } catch (err) {
           console.warn('Failed to parse response.body as JSON', err);
         }
       } else if (Array.isArray(data)) {
-        inspectionsArray = data;
+        inspectionsArray = data as Record<string, unknown>[];
       }
 
       console.log('[Inspections] resolved items count:', inspectionsArray.length, inspectionsArray[0]);
@@ -91,22 +95,23 @@ export function InspectorHome({
         body: JSON.stringify({ action: 'get_venues' }),
       });
       const data = await res.json();
-      let items: any[] = [];
-      if (Array.isArray(data)) items = data;
-      else if (Array.isArray(data.venues)) items = data.venues;
+      let items: Record<string, unknown>[] = [];
+      if (Array.isArray(data)) items = data as Record<string, unknown>[];
+      else if (Array.isArray(data.venues)) items = data.venues as Record<string, unknown>[];
       else if (data.body) {
         try {
           const parsed = typeof data.body === 'string' ? JSON.parse(data.body) : data.body;
-          items = parsed.venues || parsed.Items || parsed || [];
+          items = (parsed.venues || parsed.Items || parsed || []) as Record<string, unknown>[];
         } catch (err) {
           console.warn('Failed to parse venues.body', err);
         }
       }
 
       const map: Record<string, string> = {};
-      items.forEach((v: any) => {
-        const id = v.venueId || v.id;
-        if (id) map[id] = v.name || '';
+      items.forEach((v: Record<string, unknown>) => {
+        const vRec = v as Record<string, unknown>;
+        const id = (vRec['venueId'] as string) || (vRec['id'] as string);
+        if (id) map[id] = (vRec['name'] as string) || '';
       });
       setVenuesMap(map);
       return map;
@@ -121,7 +126,10 @@ export function InspectorHome({
   useEffect(() => {
     if (venues && venues.length > 0) {
       const map: Record<string, string> = {};
-      venues.forEach((v: any) => { map[v.id] = v.name; });
+      venues.forEach((v: Venue) => {
+        const id = v.id || v.venueId;
+        if (id) map[String(id)] = v.name || '';
+      });
       setVenuesMap(map);
     } else {
       fetchVenues().catch(() => {});
@@ -140,63 +148,69 @@ export function InspectorHome({
   useEffect(() => {
     const loadSummaries = async () => {
       try {
-        const ids = dynamoInspections.map((i) => i.inspection_id).filter(Boolean);
-        const results: Record<string, any> = {};
+        const ids: string[] = dynamoInspections.map((i) => String((i as Record<string, unknown>)['inspection_id'] || '')).filter(Boolean);
+        const results: Record<string, unknown> = {};
 
         // Optimistic seed: prefill inspection summaries from venue definitions to avoid flicker on the homepage
         try {
-          const optimistic: Record<string, any> = {};
-          (dynamoInspections || []).forEach((it: any) => {
-            const vid = it.venue_id || it.venueId || it.venue;
-            const venueObj = (venues || []).find((v: any) => v.id === vid);
-            const totals = computeExpectedTotalsFromVenue(venueObj);
-            const byRoom = computeExpectedByRoomFromVenue(venueObj);
-            optimistic[it.inspection_id] = { inspection_id: it.inspection_id, totals, byRoom };
+          const optimistic: Record<string, unknown> = {};
+          (dynamoInspections || []).forEach((it: Record<string, unknown>) => {
+            const itRec = it as Record<string, unknown>;
+            const vid = (itRec['venue_id'] as string) || (itRec['venueId'] as string) || (itRec['venue'] as string);
+            const venueObj = (venues || []).find((v: Record<string, unknown>) => String(v['id'] || v['venueId']) === String(vid)) || null;
+            const totals = computeExpectedTotalsFromVenue(venueObj as unknown as Record<string, unknown>);
+            const byRoom = computeExpectedByRoomFromVenue(venueObj as unknown as Record<string, unknown>);
+            const key = String(itRec['inspection_id'] || '');
+            (optimistic as Record<string, unknown>)[key] = { inspection_id: key, totals, byRoom } as unknown as Record<string, unknown>;
           });
           setInspectionSummaries(optimistic);
         } catch (e) {
           // ignore optimistic seed errors
         }
 
-        await Promise.all(ids.map(async (id) => {
+        for (const id of ids) {
+          // Fetch each summary in a helper to keep try/catch scopes clear and avoid parser confusion
           try {
-            // Try the summary endpoint first
-            const res = await getInspectionSummary(id);
-            // Only accept the returned summary if it contains both totals and byRoom; otherwise run the fallback
-            if (res && res.totals && res.byRoom) {
-              // Also fetch raw items to compute last-updated info
+            const summary = await (async (inspectionId: string) => {
+              // Try the summary endpoint first
+              let res: any = null;
               try {
-                const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev';
-                const rItems = await fetch(API_BASE, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ action: 'get_inspection', inspection_id: id }),
-                });
-                let items: any[] = [];
-                if (rItems.ok) {
-                  const dataItems = await rItems.json();
-                  items = dataItems.items || (dataItems.body ? (typeof dataItems.body === 'string' ? JSON.parse(dataItems.body).items || [] : dataItems.body.items || []) : []);
-                }
+                res = await getInspectionSummary(inspectionId);
+              } catch (err) {
+                console.warn('getInspectionSummary failed', inspectionId, err);
+                res = null;
+              }
 
+              // If the summary endpoint returned enough data, enrich it with lastUpdated info
+              if (res && res.totals && res.byRoom) {
                 let latestTs: string | null = null;
                 let latestBy: string | null = null;
-                for (const it of items) {
-                  const ts = it.updatedAt || it.updated_at || it.createdAt || it.created_at;
-                  if (ts && (!latestTs || new Date(ts) > new Date(latestTs))) {
-                    latestTs = ts;
-                    latestBy = it.inspectorName || it.createdBy || it.inspector_name || it.created_by || null;
+                try {
+                  const items = (await getInspectionItems(inspectionId)) || [];
+                  for (const it of items) {
+                    const itRec = it as Record<string, unknown>;
+                    const tsRaw = itRec['updatedAt'] || itRec['updated_at'] || itRec['createdAt'] || itRec['created_at'];
+                    const ts = tsRaw ? String(tsRaw) : null;
+                    if (ts && (!latestTs || new Date(ts) > new Date(latestTs))) {
+                      latestTs = ts;
+                      const byRaw = itRec['inspectorName'] || itRec['createdBy'] || itRec['inspector_name'] || itRec['created_by'] || null;
+                      latestBy = byRaw ? String(byRaw) : null;
+                    }
                   }
+                } catch (e) {
+                  console.warn('Failed to fetch items for lastUpdated', inspectionId, e);
                 }
 
                 // Ensure totals include pending items expected by venue definition if DB reports fewer items
                 try {
-                  const meta = dynamoInspections.find((d) => d.inspection_id === id) || {};
-                  const venueId = meta.venueId || meta.venue_id || meta.venue;
+                  const meta = dynamoInspections.find((d: Record<string, unknown>) => String(d['inspection_id'] || '') === inspectionId) || {};
+                  const venueId = String((meta as Record<string, unknown>)['venueId'] || (meta as Record<string, unknown>)['venue_id'] || (meta as Record<string, unknown>)['venue'] || '');
                   let expectedTotal = 0;
                   if (venueId) {
-                    const venueObj = (venues || []).find((v: any) => v.id === venueId);
+                    const venueObj = (venues || []).find((v: Venue) => String(v.id || v.venueId) === String(venueId));
                     if (venueObj) {
-                      expectedTotal = (venueObj.rooms || []).reduce((s: number, r: any) => s + ((r.items || []).length || 0), 0);
+                      const rooms = (venueObj.rooms || []) as Room[];
+                      expectedTotal = rooms.reduce((s: number, r: Room) => s + ((r.items || []).length || 0), 0);
                     }
                   }
                   if (expectedTotal > 0) {
@@ -207,113 +221,106 @@ export function InspectorHome({
                     res.totals = t;
                   }
                 } catch (e) {
-                  console.warn('Failed to enrich totals with expected items', id, e);
+                  console.warn('Failed to enrich totals with expected items', inspectionId, e);
                 }
 
-                results[id] = { ...res, inspection_id: id, lastUpdated: latestTs, lastUpdatedBy: latestBy };
-                console.log('[Summary] loaded for', id, res.totals, 'lastUpdated', latestTs);
-                return;
-              } catch (e) {
-                console.warn('Failed to fetch items for lastUpdated', id, e);
-                results[id] = res;
-                return;
-              }
-            }
-
-            // Fallback: query raw items and compute totals (like RoomList does)
-            const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev';
-            try {
-              const r = await fetch(API_BASE, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'get_inspection', inspection_id: id }),
-              });
-              if (!r.ok) {
-                const t = await r.text().catch(() => '');
-                console.warn('Fallback get_inspection non-ok', r.status, t);
-                return;
-              }
-              const data = await r.json();
-              const items = data.items || (data.body ? (typeof data.body === 'string' ? JSON.parse(data.body).items || [] : data.body.items || []) : []);
-
-              const totals = { pass: 0, fail: 0, na: 0, pending: 0, total: 0 };
-              const byRoom: Record<string, any> = {};
-              let latestTs: string | null = null;
-              let latestBy: string | null = null;
-              for (const it of items) {
-                const rid = it.roomId || it.room_id || it.room || '';
-                if (!rid) continue;
-                const status = (it.status || 'pending').toLowerCase();
-                totals.total += 1;
-                if (status === 'pass') totals.pass++;
-                else if (status === 'fail') totals.fail++;
-                else if (status === 'na') totals.na++;
-                else totals.pending++;
-
-                const br = byRoom[rid] || (byRoom[rid] = { pass: 0, fail: 0, na: 0, pending: 0, total: 0 });
-                br.total += 1;
-                if (status === 'pass') br.pass++;
-                else if (status === 'fail') br.fail++;
-                else if (status === 'na') br.na++;
-                else br.pending++;
-
-                const ts = it.updatedAt || it.updated_at || it.createdAt || it.created_at;
-                if (ts && (!latestTs || new Date(ts) > new Date(latestTs))) {
-                  latestTs = ts;
-                  latestBy = it.inspectorName || it.createdBy || it.inspector_name || it.created_by || null;
-                }
+                return { ...res, inspection_id: inspectionId, lastUpdated: latestTs, lastUpdatedBy: latestBy };
               }
 
-              // If DB has fewer items than expected by venue definition, default missing ones to pending
+              // Fallback: query raw items and compute totals using centralized helper
               try {
-                const meta = dynamoInspections.find((d) => d.inspection_id === id) || {};
-                const venueId = meta.venueId || meta.venue_id || meta.venue;
-                if (venueId) {
-                  const venueObj = (venues || []).find((v: any) => v.id === venueId);
-                  if (venueObj) {
-                    // Ensure per-room entries exist for rooms with no DB rows and mark them pending
-                    (venueObj.rooms || []).forEach((r: any) => {
-                      const rid = r.id;
-                      if (!byRoom[rid]) {
-                        byRoom[rid] = { pass: 0, fail: 0, na: 0, pending: (r.items || []).length || 0, total: (r.items || []).length || 0 };
-                      }
-                    });
+                const items = (await getInspectionItems(inspectionId)) || [];
 
-                    const expectedTotal = (venueObj.rooms || []).reduce((s: number, r: any) => s + ((r.items || []).length || 0), 0);
-                    const known = (totals.pass || 0) + (totals.fail || 0) + (totals.na || 0);
-                    totals.pending = Math.max(0, expectedTotal - known);
-                    totals.total = known + totals.pending;
+                const totals = { pass: 0, fail: 0, na: 0, pending: 0, total: 0 };
+                const byRoom: Record<string, { pass: number; fail: number; na: number; pending: number; total: number }> = {};
+                let latestTs: string | null = null;
+                let latestBy: string | null = null;
+                for (const it of items as Record<string, unknown>[]) {
+                  const itRec = it as Record<string, unknown>;
+                  const rid = (itRec['roomId'] as string) || (itRec['room_id'] as string) || (itRec['room'] as string) || '';
+                  if (!rid) continue;
+                  const status = ((itRec['status'] as string) || 'pending').toString().toLowerCase();
+                  totals.total += 1;
+                  if (status === 'pass') totals.pass++;
+                  else if (status === 'fail') totals.fail++;
+                  else if (status === 'na') totals.na++;
+                  else totals.pending++;
+
+                  const br = byRoom[rid] || (byRoom[rid] = { pass: 0, fail: 0, na: 0, pending: 0, total: 0 });
+                  br.total += 1;
+                  if (status === 'pass') br.pass++;
+                  else if (status === 'fail') br.fail++;
+                  else if (status === 'na') br.na++;
+                  else br.pending++;
+
+                  const tsRaw = itRec['updatedAt'] || itRec['updated_at'] || itRec['createdAt'] || itRec['created_at'];
+                  const ts = tsRaw ? String(tsRaw) : null;
+                  if (ts && (!latestTs || new Date(ts) > new Date(latestTs))) {
+                    latestTs = ts;
+                    const byRaw = itRec['inspectorName'] || itRec['createdBy'] || itRec['inspector_name'] || itRec['created_by'] || null;
+                    latestBy = byRaw ? String(byRaw) : null;
                   }
                 }
-              } catch (e) {
-                console.warn('Failed to enrich fallback totals with expected items', id, e);
-              }
 
-              results[id] = { inspection_id: id, totals, byRoom, lastUpdated: latestTs, lastUpdatedBy: latestBy };
-              console.log('[Summary] fallback computed for', id, totals);
-            } catch (e) {
-              console.warn('Fallback get_inspection failed for', id, e);
+                // If DB has fewer items than expected by venue definition, default missing ones to pending
+                try {
+                  const meta = dynamoInspections.find((d: Record<string, unknown>) => String(d['inspection_id'] || '') === inspectionId) || {};
+                  const venueId = String((meta as Record<string, unknown>)['venueId'] || (meta as Record<string, unknown>)['venue_id'] || (meta as Record<string, unknown>)['venue'] || '');
+                  if (venueId) {
+                    const venueObj = (venues || []).find((v: Venue) => String(v.id || v.venueId) === venueId) || null;
+                    if (venueObj) {
+                      const rooms = (venueObj.rooms || []) as Room[];
+                      rooms.forEach((r: Room) => {
+                        const rid = String(r.id || r.roomId || '');
+                        if (!byRoom[rid]) {
+                          byRoom[rid] = { pass: 0, fail: 0, na: 0, pending: ((r.items || []) as Record<string, unknown>[]).length || 0, total: ((r.items || []) as Record<string, unknown>[]).length || 0 };
+                        }
+                      });
+
+                      const expectedTotal = ((venueObj.rooms || []) as Room[]).reduce((s: number, r: Room) => s + (((r.items || []) as Record<string, unknown>[]).length || 0), 0);
+                      const known = (totals.pass || 0) + (totals.fail || 0) + (totals.na || 0);
+                      totals.pending = Math.max(0, expectedTotal - known);
+                      totals.total = known + totals.pending;
+                    }
+                  }
+                } catch (e) {
+                  console.warn('Failed to enrich fallback totals', inspectionId, e);
+                }
+
+                return { inspection_id: inspectionId, totals, byRoom, lastUpdated: latestTs, lastUpdatedBy: latestBy };
+              } catch (e) {
+                console.warn('Fallback get_inspection failed for', inspectionId, e);
+                return null;
+              }
+            })(id);
+
+            if (summary) {
+              results[id] = summary;
             }
-          } catch (e) { console.warn('summary fetch failed', id, e); }
-        }));
+          } catch (e) {
+            console.warn('summary fetch failed', id, e);
+          }
+        }
+
         setInspectionSummaries(results);
 
         // Compute active (uncompleted) inspection count by asking backend whether each inspection is complete
         (async () => {
           try {
-            const counts = await Promise.all(dynamoInspections.map(async (it: any) => {
-              const status = (it.status || 'in-progress');
+            const counts = await Promise.all(dynamoInspections.map(async (it: Record<string, unknown>) => {
+              const itRec = it as Record<string, unknown>;
+              const status = String(itRec['status'] || 'in-progress');
               if (status && status.toString().toLowerCase() === 'completed') return 0; // already completed
 
-              const venueId = it.venue_id || it.venueId || it.venue;
+              const venueId = (itRec['venue_id'] as string) || (itRec['venueId'] as string) || (itRec['venue'] as string) || '';
               if (!venueId) return 1; // no venue yet -> not complete
 
               try {
-                const c = await checkInspectionComplete(it.inspection_id, venueId);
+                const c = await checkInspectionComplete(String(itRec['inspection_id'] || ''), String(venueId)) as CompletionResult | null;
                 if (c && c.complete === true) return 0;
                 return 1;
               } catch (e) {
-                console.warn('checkInspectionComplete failed for', it.inspection_id, e);
+                console.warn('checkInspectionComplete failed for', itRec['inspection_id'], e);
                 return 1;
               }
             }));
@@ -335,32 +342,37 @@ export function InspectorHome({
 
 
   const ongoingInspections = dynamoInspections
-    .filter((inspection) => ((inspection.status || 'in-progress').toString().toLowerCase() !== 'completed' && !completedMap[inspection.inspection_id]))
-    .map((inspection) => {
-      const vid = inspection.venue_id || inspection.venueId || inspection.venue;
-      const venueObj = (venues || []).find((v: any) => v.id === vid);
-      const venueName = venueObj ? venueObj.name : (venuesMap[vid] || inspection.venue_name || inspection.venueName || 'Venue not selected');
-      const roomObj = venueObj ? (venueObj.rooms || []).find((r: any) => r.id === (inspection.room_id || inspection.roomId)) : null;
-      const roomName = roomObj ? roomObj.name : (inspection.room_name || inspection.roomName || '');
+    .filter((inspection: Record<string, unknown>) => {
+      const status = String(inspection['status'] || 'in-progress');
+      return status.toLowerCase() !== 'completed' && !completedMap[String(inspection['inspection_id'] || '')];
+    })
+    .map((inspection: Record<string, unknown>) => {
+      const vid = (inspection['venue_id'] as string) || (inspection['venueId'] as string) || (inspection['venue'] as string) || '';
+      const venueObj = (venues || []).find((v: Venue) => String(v.id || v.venueId) === vid) || null;
+      const venueName = venueObj ? (venueObj.name || '') : (venuesMap[vid] || (inspection['venue_name'] as string) || (inspection['venueName'] as string) || 'Venue not selected');
+      const roomObj = venueObj ? (((venueObj.rooms || []) as Room[]).find((r: Room) => String(r.id || r.roomId) === ((inspection['room_id'] as string) || (inspection['roomId'] as string) || ''))) : null;
+      const roomName = roomObj ? (roomObj.name || '') : ((inspection['room_name'] as string) || (inspection['roomName'] as string) || '');
 
       return {
-        id: inspection.inspection_id,
-        venueName,
-        roomName,
-        timestamp: inspection.created_at,
-        venueId: vid,
-        roomId: inspection.room_id || '',
-        status: inspection.status || 'draft',
-        items: inspection.items || [],
-        inspectorName: inspection.created_by,
+        id: String(inspection['inspection_id'] || ''),
+        venueName: String(venueName),
+        roomName: String(roomName),
+        timestamp: String(inspection['created_at'] as string || ''),
+        venueId: String(vid),
+        roomId: String((inspection['room_id'] as string) || ''),
+        status: String((inspection['status'] as string) || 'draft'),
+        items: (inspection['items'] as unknown[]) || [],
+        inspectorName: String(inspection['created_by'] as string || ''),
         raw: inspection,
       };
     });
 
 
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
+  const formatDate = (dateString?: unknown) => {
+    if (!dateString) return '';
+    const date = new Date(String(dateString));
+    if (isNaN(date.getTime())) return String(dateString);
     return date.toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric',
@@ -370,29 +382,42 @@ export function InspectorHome({
     });
   };
 
+  type Summary = { totals?: { pass?: number; fail?: number; na?: number; pending?: number; total?: number }; byRoom?: Record<string, any>; lastUpdated?: string | null; lastUpdatedBy?: string | null };
+  const getSummary = (id?: string): Summary | undefined => {
+    if (!id) return undefined;
+    return inspectionSummaries[id] as Summary | undefined;
+  };
+
   // Completed inspections list (derived from status or completedMap)
   const completedInspections = dynamoInspections
-    .filter((inspection) => (((inspection.status || '').toString().toLowerCase() === 'completed') || completedMap[inspection.inspection_id]))
-    .map((inspection) => {
-      const vid = inspection.venue_id || inspection.venueId || inspection.venue;
-      const venueObj = (venues || []).find((v: any) => v.id === vid);
-      const venueName = venueObj ? venueObj.name : (venuesMap[vid] || inspection.venue_name || inspection.venueName || 'Venue not selected');
-      const roomObj = venueObj ? (venueObj.rooms || []).find((r: any) => r.id === (inspection.room_id || inspection.roomId)) : null;
-      const roomName = roomObj ? roomObj.name : (inspection.room_name || inspection.roomName || '');
+    .filter((inspection: Record<string, unknown>) => (((String(inspection['status'] || '')).toLowerCase() === 'completed') || completedMap[String(inspection['inspection_id'] || '')]))
+    .map((inspection: Record<string, unknown>) => {
+      const vid = (inspection['venue_id'] as string) || (inspection['venueId'] as string) || (inspection['venue'] as string) || '';
+      const venueObj = (venues || []).find((v: Venue) => String(v.id || v.venueId) === vid) || null;
+      const venueName = venueObj ? (venueObj.name || '') : (venuesMap[vid] || (inspection['venue_name'] as string) || (inspection['venueName'] as string) || 'Venue not selected');
+      const roomObj = venueObj ? (((venueObj.rooms || []) as Room[]).find((r: Room) => String(r.id || r.roomId) === ((inspection['room_id'] as string) || (inspection['roomId'] as string) || ''))) : null;
+      const roomName = roomObj ? (roomObj.name || '') : ((inspection['room_name'] as string) || (inspection['roomName'] as string) || '');
 
       return {
-        id: inspection.inspection_id,
-        venueName,
-        roomName,
-        timestamp: inspection.created_at || inspection.updated_at || inspection.timestamp,
-        venueId: vid,
-        roomId: inspection.room_id || '',
-        status: inspection.status || 'completed',
-        items: inspection.items || [],
-        inspectorName: inspection.created_by,
+        id: String(inspection['inspection_id'] || ''),
+        venueName: String(venueName),
+        roomName: String(roomName),
+        timestamp: String((inspection['created_at'] as string) || (inspection['updated_at'] as string) || (inspection['timestamp'] as string) || ''),
+        updatedAt: String((inspection['updated_at'] as string) || (inspection['updatedAt'] as string) || ''),
+        venueId: String(vid),
+        roomId: String((inspection['room_id'] as string) || ''),
+        status: String((inspection['status'] as string) || 'completed'),
+        items: (inspection['items'] as unknown[]) || [],
+        inspectorName: String(inspection['created_by'] as string || ''),
         raw: inspection,
       };
     });
+
+  // Show only the most recent N completed inspections on the Home page to avoid clutter
+  const MAX_HOME_COMPLETED = 6;
+  const displayedCompletedInspections = [...completedInspections]
+    .sort((a: any, b: any) => new Date((b.updatedAt || b.timestamp) as string).getTime() - new Date((a.updatedAt || a.timestamp) as string).getTime())
+    .slice(0, MAX_HOME_COMPLETED);
 
   const getInspectionProgress = (inspection: Inspection) => {
     if (inspection.status === 'draft') return 'Not started';
@@ -403,9 +428,9 @@ export function InspectorHome({
     return `${completed}/${inspection.items.length} items`;
   };
 
-  const handleDeleteInspection = async (e: React.MouseEvent, inspection: any) => {
+  const handleDeleteInspection = async (e: React.MouseEvent, inspection: Record<string, unknown>) => {
     e.stopPropagation();
-    const id = inspection.id || inspection.inspection_id;
+    const id = String(inspection['id'] || inspection['inspection_id'] || '');
     const confirmed = await confirm({
       title: 'Delete inspection',
       message: `Are you sure you want to delete the inspection for ${inspection.venueName || id}?`,
@@ -581,11 +606,14 @@ export function InspectorHome({
                           {/* Subtle progress: show done/expected if we can */}
                           {(() => {
                             const vid = inspection.venueId;
-                            const venueObj = propsVenues.find((v: any) => v.id === vid);
+                            const venueObj = propsVenues.find((v: Venue) => String(v.id || v.venueId) === String(vid));
                             if (venueObj && inspection.roomId) {
-                              const roomObj = (venueObj.rooms || []).find((r: any) => r.roomId === inspection.roomId || r.id === inspection.roomId);
-                              const expected = roomObj ? (roomObj.items || []).length : (inspection.items || []).length || 0;
-                              const done = (inspection.items || []).filter((it: any) => it.status && it.status !== 'pending').length;
+                              const roomObj = ((venueObj.rooms || []) as Room[]).find((r: Room) => String(r.roomId || r.id) === String(inspection.roomId));
+                              const expected = roomObj ? ((roomObj.items || []) as Record<string, unknown>[]).length : ((inspection.items || []) as Record<string, unknown>[]).length || 0;
+                              const done = ((inspection.items || []) as Record<string, unknown>[]).filter((it: Record<string, unknown>) => {
+                                const s = String(it['status'] || 'pending');
+                                return s && s !== 'pending';
+                              }).length;
                               if (expected > 0) return <div className="text-xs text-orange-600 mt-1">{done}/{expected} items</div>;
                             }
                             return null;
@@ -606,28 +634,40 @@ export function InspectorHome({
                         Created by: <span className="font-medium">{inspection.inspectorName}</span>
                       </div>
 
-                      {inspectionSummaries[inspection.id] && inspectionSummaries[inspection.id].lastUpdated && (
-                        <div className="flex items-center gap-2 text-xs lg:text-sm text-orange-600">
-                          <Clock className="w-4 h-4 flex-shrink-0" />
-                          <span>Last updated: {formatDate(inspectionSummaries[inspection.id].lastUpdated)}</span>
-                        </div>
-                      )}
+                      {(() => {
+                        const s = getSummary(inspection.id);
+                        if (s && s.lastUpdated) return (
+                          <div className="flex items-center gap-2 text-xs lg:text-sm text-orange-600">
+                            <Clock className="w-4 h-4 flex-shrink-0" />
+                            <span>Last updated: {formatDate(s.lastUpdated)}</span>
+                          </div>
+                        );
+                        return null;
+                      })()}
 
-                      {inspectionSummaries[inspection.id] && inspectionSummaries[inspection.id].lastUpdatedBy && (
-                        <div className="text-xs lg:text-sm text-orange-700">
-                          Last updated by: <span className="font-medium">{inspectionSummaries[inspection.id].lastUpdatedBy}</span>
-                        </div>
-                      )}
+                      {(() => {
+                        const s = getSummary(inspection.id);
+                        if (s && s.lastUpdatedBy) return (
+                          <div className="text-xs lg:text-sm text-orange-700">
+                            Last updated by: <span className="font-medium">{s.lastUpdatedBy}</span>
+                          </div>
+                        );
+                        return null;
+                      })()}
 
                       {/* Summary (pass/fail/pending). If no DB summary exists, compute expected pending from venue definition */}
                       {(() => {
                         const s = inspectionSummaries[inspection.id];
-                        let totals = s && s.totals ? s.totals : null;
+                        let totals = s ? ((s as Record<string, unknown>)['totals'] as Record<string, number> | undefined) || null : null;
                         if (!totals) {
                           // Compute expected pending from venue definition or fallback to items length
                           const vid = inspection.venueId || inspection.venueId || inspection.raw?.venue_id || inspection.raw?.venueId;
-                          const venueObj = (venues || []).find((v: any) => v.id === vid);
-                          const expected = venueObj ? (venueObj.rooms || []).reduce((s: number, r: any) => s + ((r.items || []).length || 0), 0) : (inspection.items || []).length || 0;
+                          const venueObj = (venues || []).find((v: Venue) => String(v.id || v.venueId) === String(vid)) || null;
+                          let expected = ((inspection.items || []) as Record<string, unknown>[]).length || 0;
+                          if (venueObj) {
+                            const rooms = (venueObj.rooms || []) as Room[];
+                            expected = rooms.reduce((acc: number, r: Room) => acc + (((r.items || []) as Record<string, unknown>[]).length || 0), 0);
+                          }
                           totals = { pass: 0, fail: 0, na: 0, pending: expected, total: expected };
                         }
                         if (!totals) return null;
@@ -694,7 +734,7 @@ export function InspectorHome({
               </div>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-6">
-                {completedInspections.map((inspection) => (
+                {displayedCompletedInspections.map((inspection) => (
                   <div
                     key={inspection.id}
                     className="border-2 border-green-200 bg-green-50 rounded-lg overflow-hidden"
@@ -704,7 +744,9 @@ export function InspectorHome({
                         <div className="flex-1 min-w-0">
                           <h3 className="text-green-800 truncate">{inspection.venueName}</h3>
                           <p className="text-green-700 text-sm truncate">{inspection.roomName}</p>
-                          <div className="text-xs text-green-600 mt-1">Completed: {formatDate(inspection.timestamp as string)}</div>
+                          {inspection.updatedAt && (
+                            <div className="text-xs text-green-600 mt-1">Completed: {formatDate(inspection.updatedAt as string)}</div>
+                          )}
                         </div>
                       </div>
                     </div>

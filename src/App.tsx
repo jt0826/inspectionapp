@@ -6,9 +6,11 @@ import { VenueList } from './components/VenueList';
 import { RoomList } from './components/RoomList';
 import { InspectionForm } from './components/InspectionForm';
 import { InspectionSummary } from './components/InspectionSummary';
+import { InspectionHistory } from './components/InspectionHistory';
 import { VenueForm } from './components/VenueForm';
 import { UserProfile } from './components/UserProfile';
 import { InspectorHome } from './components/InspectorHome';
+import { getInspectionItems } from './utils/inspectionApi';
 import { VenueSelection } from './components/VenueSelection';
 import { InspectionConfirmation } from './components/InspectionConfirmation';
 import { VenueLayout } from './components/VenueLayout';
@@ -346,15 +348,11 @@ function AppContent() {
 
   const fetchInspectionItems = async (inspectionId: string, roomId?: string) => {
     try {
-      const res = await fetch(API_BASE, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'get_inspection', inspection_id: inspectionId, roomId }),
-      });
-
-      if (!res.ok) return [];
-      const data = await res.json();
-      let items = data.items || (data.body ? (JSON.parse(data.body).items || []) : []);
+      const items = await getInspectionItems(inspectionId);
+      if (!items) return [];
+      if (roomId) {
+        return (items as any[]).filter((it) => String(it.roomId || it.room_id || it.room || '') === String(roomId));
+      }
       return items;
     } catch (e) {
       console.warn('Failed to fetch inspection items:', e);
@@ -724,14 +722,10 @@ function AppContent() {
 
 
       {currentView === 'history' && (
-        <InspectionSummary
+        <InspectionHistory
           inspections={inspections}
           onBack={handleBackToHome}
-          onClearAll={() => setInspections([])}
-          onEditInspection={handleEditInspection}
-          onDeleteInspection={handleDeleteInspection}
-          onReInspection={handleReInspection}
-          venues={venues}
+          onDeleteInspection={handleDeleteInspectionById}
         />
       )}
     </div>
