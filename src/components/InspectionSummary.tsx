@@ -315,6 +315,8 @@ export function InspectionSummary({
                                             key={photoIndex}
                                             src={photo}
                                             alt={`Evidence ${photoIndex + 1}`}
+                                            width={64}
+                                            height={64}
                                             className="w-16 h-16 object-cover rounded border border-red-300 cursor-pointer hover:scale-105 transition-transform"
                                             onClick={() => window.open(photo, '_blank')}
                                           />

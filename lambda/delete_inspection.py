@@ -6,7 +6,7 @@ table = dynamodb.Table('InspectionData')  # update if needed
 
 # Common CORS headers (restrict origin to your frontend in production)
 CORS_HEADERS = {
-    "Access-Control-Allow-Origin": "http://localhost:3000",   # or "*" for dev
+    "Access-Control-Allow-Origin": "*",   # or "*" for dev
     "Access-Control-Allow-Headers": "Content-Type,Authorization",
     "Access-Control-Allow-Methods": "OPTIONS,POST,GET,DELETE",
     "Content-Type": "application/json"

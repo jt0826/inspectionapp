@@ -223,7 +223,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
         </div>
 
         {/* Progress Stats */}
-        <div className="p-4 bg-gray-50 border-b sticky top-[140px] z-10">
+        <div className="p-4 bg-gray-50 border-b sticky top-0 lg:top-[140px] z-10">
           <div className="flex items-center justify-between text-sm mb-2">
             <span className="text-gray-700">Progress</span>
             <span className="text-gray-900">
@@ -315,12 +315,15 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                                 <img
                                   src={photo}
                                   alt={`Evidence ${photoIndex + 1}`}
+                                  width={80}
+                                  height={80}
                                   className="w-full h-20 object-cover rounded border border-gray-300"
                                 />
                                 <button
                                   type="button"
+                                  aria-label="Remove photo"
                                   onClick={() => removePhoto(item.id, photoIndex)}
-                                  className="absolute top-1 right-1 bg-red-600 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                                  className="absolute top-2 right-2 bg-red-600 text-white rounded-full p-2 opacity-0 group-hover:opacity-100 transition-opacity"
                                 >
                                   <X className="w-3 h-3" />
                                 </button>
@@ -353,7 +356,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
         </div>
 
         {/* Fixed Bottom Button */}
-        <div className="fixed bottom-0 left-0 right-0 p-4 bg-white border-t max-w-md mx-auto">
+        <div className="fixed bottom-0 left-0 right-0 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] bg-white border-t max-w-md mx-auto">
           <button
             onClick={handleSubmit}
             disabled={completedCount === 0 || saving}

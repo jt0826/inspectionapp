@@ -188,7 +188,7 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
 
         {/* Fixed Bottom Create Button */}
         {selectedVenue && (
-          <div className="fixed bottom-0 left-0 right-0 p-4 lg:p-6 bg-white border-t shadow-lg max-w-4xl mx-auto">
+          <div className="fixed bottom-0 left-0 right-0 p-4 lg:p-6 pb-[calc(1rem+env(safe-area-inset-bottom))] bg-white border-t shadow-lg max-w-4xl mx-auto">
             <button
               onClick={handleCreateInspection}
               disabled={!selectedVenue}

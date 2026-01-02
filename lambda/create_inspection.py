@@ -9,7 +9,7 @@ def _now_local_iso():
     # Return ISO8601 timestamp in local timezone (GMT+8)
     return datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).isoformat()
 CORS_HEADERS = {
-    'Access-Control-Allow-Origin': 'http://localhost:3000',
+    'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type,Authorization',
     'Access-Control-Allow-Methods': 'OPTIONS,POST,PUT',
     'Content-Type': 'application/json'

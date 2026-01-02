@@ -6,7 +6,7 @@ TABLE_NAME = 'Venues'
 
 # CORS settings - set Access-Control-Allow-Origin to your frontend origin in production
 CORS_HEADERS = {
-    'Access-Control-Allow-Origin': 'http://localhost:3000',
+    'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type,Authorization',
     'Access-Control-Allow-Methods': 'GET,OPTIONS',
     'Content-Type': 'application/json'

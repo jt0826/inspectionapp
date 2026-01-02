@@ -572,7 +572,7 @@ function AppContent() {
     setInspections(inspections.filter((i) => i.venueId !== venueId));
 
     try {
-      const res = await fetch(API_BASE, {
+      const res = await fetch("https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/venues-create", {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'delete_venue', venueId }),

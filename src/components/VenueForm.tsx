@@ -280,7 +280,7 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
       </form>
 
       {/* Fixed Bottom Button */}
-      <div className="fixed bottom-0 left-0 right-0 p-4 lg:p-6 bg-white border-t max-w-4xl mx-auto">
+      <div className="fixed bottom-0 left-0 right-0 p-4 lg:p-6 pb-[calc(1rem+env(safe-area-inset-bottom))] bg-white border-t max-w-4xl mx-auto">
         <button
           onClick={handleSubmit}
           disabled={saving}
