@@ -1,8 +1,12 @@
 import json
 import boto3
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 TABLE_NAME = 'Inspection'
+
+def _now_local_iso():
+    # Return ISO8601 timestamp in local timezone (GMT+8)
+    return datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).isoformat()
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': 'http://localhost:3000',
     'Access-Control-Allow-Headers': 'Content-Type,Authorization',
@@ -18,6 +22,10 @@ def build_response(status_code, body):
         'headers': CORS_HEADERS,
         'body': json.dumps(body)
     }
+
+
+# NOTE: Use local timezone (GMT+8) timestamps for createdAt/updatedAt to match user locale
+# _now_local_iso() returns an ISO8601 string with +08:00 offset
 
 
 def lambda_handler(event, context):
@@ -42,6 +50,13 @@ def lambda_handler(event, context):
                         body[k] = v
             except Exception:
                 pass
+
+        # small helpers to be tolerant of different payload shapes
+        def _coalesce(*vals):
+            for v in vals:
+                if v is not None and v != '':
+                    return v
+            return None
 
         action = body.get('action') or body.get('Action')
         print('action:', action)
@@ -98,7 +113,7 @@ def lambda_handler(event, context):
             if not inspection_id:
                 return build_response(400, {'message': 'inspection_id is required'})
 
-            now = datetime.utcnow().isoformat()
+            now = _now_local_iso()
             # Discover table key schema to ensure we write the correct attribute names
             client = boto3.client('dynamodb')
             try:
@@ -119,26 +134,79 @@ def lambda_handler(event, context):
                     key = {pk_attr: inspection_id}
                     if sk_attr:
                         key[sk_attr] = '__meta__'
-                    item = {pk_attr: inspection_id, 'createdAt': ins.get('timestamp', now), 'updatedAt': now, 'inspectorName': ins.get('inspectorName'), 'venueId': ins.get('venueId'), 'venueName': ins.get('venueName'), 'roomId': room_id, 'roomName': ins.get('roomName'), 'status': ins.get('status') or 'in-progress'}
+                    # Prefer explicit createdBy/inspectorName, fall back to updatedBy if provided
+                    created_by = _coalesce(ins.get('createdBy'), ins.get('inspectorName'), ins.get('updatedBy'))
+                    venue_id_val = _coalesce(ins.get('venueId'), ins.get('venue_id'), (ins.get('venue') or {}).get('id'))
+                    venue_name_val = _coalesce(ins.get('venueName'), ins.get('venue_name'), (ins.get('venue') or {}).get('name'))
+                    # meta rows should NOT include room fields; inspections can span multiple rooms
+                    room_id_val = None
+
+                    # If venue id missing for meta save, try to resolve by name as above
+                    if not venue_id_val and venue_name_val:
+                        try:
+                            vtable = dynamodb.Table('VenueRoomData')
+                            vresp = vtable.scan()
+                            found = [it for it in (vresp.get('Items') or []) if (it.get('name') or '').lower() == (venue_name_val or '').lower()]
+                            if found:
+                                venue_id_val = found[0].get('venueId') or found[0].get('id')
+                                print('Resolved meta venue_id by name:', venue_id_val)
+                        except Exception as e:
+                            print('Failed to resolve meta venue id by name:', e)
+
+                    print('Saving meta for inspection:', inspection_id, 'resolved venueId:', venue_id_val, 'venueName:', venue_name_val, 'roomId:', room_id_val)
+
+                    # Load existing meta (if any) to avoid overwriting fields with null when client omits them
+                    existing_meta = None
+                    try:
+                        get_key = {pk_attr: inspection_id}
+                        if sk_attr:
+                            get_key[sk_attr] = '__meta__'
+                        resp_get = table.get_item(Key=get_key)
+                        existing_meta = resp_get.get('Item') or {}
+                    except Exception:
+                        existing_meta = None
+
+                    merged_created_at = existing_meta.get('createdAt') if existing_meta and existing_meta.get('createdAt') else ins.get('timestamp', now)
+                    merged_created_by = existing_meta.get('createdBy') if existing_meta and existing_meta.get('createdBy') else created_by
+                    merged_venue_id = existing_meta.get('venueId') if existing_meta and (existing_meta.get('venueId') is not None) else venue_id_val
+                    merged_venue_name = existing_meta.get('venueName') if existing_meta and (existing_meta.get('venueName') is not None) else venue_name_val
+
+                    item = {pk_attr: inspection_id, 'createdAt': merged_created_at, 'updatedAt': now, 'createdBy': merged_created_by, 'updatedBy': ins.get('updatedBy') or merged_created_by, 'venueId': merged_venue_id, 'venueName': merged_venue_name, 'venue_name': merged_venue_name, 'status': ins.get('status') or (existing_meta.get('status') if existing_meta else 'in-progress')}
                     if sk_attr:
                         item[sk_attr] = '__meta__'
-                    table.put_item(Item=item)
+
+                    # Persist the merged meta row using put_item to ensure a full canonical meta exists
+                    try:
+                        table.put_item(Item=item)
+                    except Exception as e:
+                        print('Failed to put meta item after merge:', e)
 
                     # Upsert into InspectionData and return it so frontend has consistent metadata
                     insp_data_row = None
                     try:
                         insp_data_table = dynamodb.Table('InspectionData')
-                        insp_data_table.put_item(Item={
+                        # Merge with existing InspectionData to avoid wiping venue fields
+                        try:
+                            resp_meta = insp_data_table.get_item(Key={'inspection_id': inspection_id})
+                            existing_data = resp_meta.get('Item') or {}
+                        except Exception:
+                            existing_data = {}
+
+                        insp_data_item = {
                             'inspection_id': inspection_id,
-                            'createdAt': item.get('createdAt'),
+                            'createdAt': existing_data.get('createdAt') or item.get('createdAt'),
                             'updatedAt': now,
-                            'inspectorName': item.get('inspectorName'),
-                            'venueId': item.get('venueId'),
-                            'venueName': item.get('venueName'),
-                            'roomId': item.get('roomId'),
-                            'roomName': item.get('roomName'),
-                            'status': item.get('status') or 'in-progress',
-                        })
+                            'createdBy': existing_data.get('createdBy') or item.get('createdBy'),
+                            'updatedBy': item.get('updatedBy'),
+                            'inspectorName': existing_data.get('inspectorName') or item.get('createdBy'),
+                            'venueId': existing_data.get('venueId') if existing_data.get('venueId') is not None else item.get('venueId'),
+                            'venueName': existing_data.get('venueName') if existing_data.get('venueName') is not None else item.get('venueName'),
+                            'venue_name': existing_data.get('venue_name') if existing_data.get('venue_name') is not None else item.get('venue_name'),
+                            'status': item.get('status') or existing_data.get('status') or 'in-progress',
+                        }
+
+                        insp_data_table.put_item(Item=insp_data_item)
+
                         try:
                             resp_meta = insp_data_table.get_item(Key={'inspection_id': inspection_id})
                             insp_data_row = resp_meta.get('Item')
@@ -166,13 +234,12 @@ def lambda_handler(event, context):
                 if sk_attr:
                     key[sk_attr] = f"{room_id}#{item_id}"
 
+                # Build update expression dynamically to avoid overwriting existing values with nulls
                 expr_vals = {
                     ':updatedAt': now,
                     ':inspectorName': ins.get('inspectorName'),
-                    ':venueId': ins.get('venueId'),
-                    ':venueName': ins.get('venueName'),
                     ':roomId': room_id,
-                    ':roomName': ins.get('roomName'),
+                    ':roomName': ins.get('roomName') or (ins.get('item') or {}).get('roomName'),
                     ':itemId': item_id,
                     ':itemName': it.get('itemName') or it.get('name') or '',
                     ':status': it.get('status'),
@@ -180,11 +247,27 @@ def lambda_handler(event, context):
                     ':createdAt': ins.get('timestamp', now),
                 }
 
-                # Only update the attributes we care about to avoid creating unintended duplicates
-                update_expr = ('SET updatedAt = :updatedAt, createdAt = if_not_exists(createdAt, :createdAt), '
-                               '#s = :status, comments = :comments, inspectorName = :inspectorName, '
-                               'venueId = :venueId, venueName = :venueName, roomId = :roomId, roomName = :roomName, '
-                               'itemId = :itemId, itemName = :itemName')
+                update_parts = [
+                    'updatedAt = :updatedAt',
+                    'createdAt = if_not_exists(createdAt, :createdAt)',
+                    '#s = :status',
+                    'comments = :comments',
+                    'inspectorName = :inspectorName',
+                    'roomId = :roomId',
+                    'roomName = :roomName',
+                    'itemId = :itemId',
+                    'itemName = :itemName',
+                ]
+
+                # Only include venue fields when present to avoid nulling existing values
+                if ins.get('venueId') is not None:
+                    update_parts.insert(5, 'venueId = :venueId')
+                    expr_vals[':venueId'] = ins.get('venueId')
+                if ins.get('venueName') is not None:
+                    update_parts.insert(6, 'venueName = :venueName')
+                    expr_vals[':venueName'] = ins.get('venueName')
+
+                update_expr = 'SET ' + ', '.join(update_parts)
                 try:
                     resp = table.update_item(
                         Key=key,
@@ -217,9 +300,9 @@ def lambda_handler(event, context):
                                 meta_key[sk_attr] = '__meta__'
                             table.update_item(
                                 Key=meta_key,
-                                UpdateExpression='SET #s = :s, updatedAt = :u',
+                                UpdateExpression='SET #s = :s, updatedAt = :u, completedAt = :c, updatedBy = :ub',
                                 ExpressionAttributeNames={'#s': 'status'},
-                                ExpressionAttributeValues={':s': 'completed', ':u': now}
+                                ExpressionAttributeValues={':s': 'completed', ':u': now, ':c': now, ':ub': ins.get('inspectorName') or ins.get('updatedBy') or ins.get('createdBy')}
                             )
                         except Exception as e:
                             print('Failed to update meta status after save:', e)
@@ -229,9 +312,9 @@ def lambda_handler(event, context):
                             insp_data_table = dynamodb.Table('InspectionData')
                             insp_data_table.update_item(
                                 Key={'inspection_id': inspection_id},
-                                UpdateExpression='SET #s = :s, updatedAt = :u',
+                                UpdateExpression='SET #s = :s, updatedAt = :u, completedAt = :c, updatedBy = :ub',
                                 ExpressionAttributeNames={'#s': 'status'},
-                                ExpressionAttributeValues={':s': 'completed', ':u': now}
+                                ExpressionAttributeValues={':s': 'completed', ':u': now, ':c': now, ':ub': ins.get('inspectorName') or ins.get('createdBy')}
                             )
                         except Exception as e:
                             print('Failed to update InspectionData status after save:', e)
@@ -261,7 +344,7 @@ def lambda_handler(event, context):
             if not inspection_id or not room_id or not item_id:
                 return build_response(400, {'message': 'inspection_id, roomId, and itemId are required for save_item'})
 
-            now = datetime.utcnow().isoformat()
+            now = _now_local_iso()
             client = boto3.client('dynamodb')
             try:
                 desc = client.describe_table(TableName=TABLE_NAME)
@@ -290,21 +373,15 @@ def lambda_handler(event, context):
                 record[sk_attr] = f"{room_id}#{item_id}"
 
             try:
-                # Prefer update_item to preserve createdAt
+                # Prefer update_item to preserve createdAt and avoid overwriting venue fields with null
                 key = {pk_attr: inspection_id}
                 if sk_attr:
                     key[sk_attr] = f"{room_id}#{item_id}"
-                now = datetime.utcnow().isoformat()
-                # Update only the relevant attributes for an existing item (upsert semantics)
-                update_expr = ('SET updatedAt = :now, createdAt = if_not_exists(createdAt, :createdAt), '
-                               '#s = :status, comments = :comments, inspectorName = :inspectorName, '
-                               'venueId = :venueId, venueName = :venueName, roomId = :roomId, roomName = :roomName, '
-                               'itemId = :itemId, itemName = :itemName')
+                now = _now_local_iso()
+
                 expr_vals = {
                     ':now': now,
                     ':inspectorName': ins.get('inspectorName') or (ins.get('item') or {}).get('inspectorName'),
-                    ':venueId': ins.get('venueId'),
-                    ':venueName': ins.get('venueName'),
                     ':roomId': room_id,
                     ':roomName': ins.get('roomName') or (ins.get('item') or {}).get('roomName'),
                     ':itemId': item_id,
@@ -313,6 +390,28 @@ def lambda_handler(event, context):
                     ':comments': comments,
                     ':createdAt': ins.get('timestamp', now),
                 }
+
+                update_parts = [
+                    'updatedAt = :now',
+                    'createdAt = if_not_exists(createdAt, :createdAt)',
+                    '#s = :status',
+                    'comments = :comments',
+                    'inspectorName = :inspectorName',
+                    'roomId = :roomId',
+                    'roomName = :roomName',
+                    'itemId = :itemId',
+                    'itemName = :itemName',
+                ]
+
+                # Only include venue fields when present to avoid nulling existing values
+                if ins.get('venueId') is not None:
+                    update_parts.insert(5, 'venueId = :venueId')
+                    expr_vals[':venueId'] = ins.get('venueId')
+                if ins.get('venueName') is not None:
+                    update_parts.insert(6, 'venueName = :venueName')
+                    expr_vals[':venueName'] = ins.get('venueName')
+
+                update_expr = 'SET ' + ', '.join(update_parts)
                 try:
                     resp = table.update_item(
                         Key=key,
@@ -323,13 +422,24 @@ def lambda_handler(event, context):
                     )
                     record = resp.get('Attributes')
 
-                    # Keep InspectionData metadata current for quick listing
+                    # Keep InspectionData metadata current for quick listing (set updatedBy and venue_name)
                     try:
                         insp_data_table = dynamodb.Table('InspectionData')
+                        # Update InspectionData without overwriting venue info unless provided in payload
+                        id_vals = {':u': now, ':ub': ins.get('inspectorName') or ins.get('updatedBy') or (ins.get('item') or {}).get('inspectorName'), ':n': ins.get('inspectorName') or (ins.get('item') or {}).get('inspectorName')}
+                        update_parts = ['updatedAt = :u', 'updatedBy = :ub', 'inspectorName = :n']
+                        if ins.get('venueId') is not None:
+                            update_parts.append('venueId = :v')
+                            id_vals[':v'] = ins.get('venueId')
+                        if ins.get('venueName') is not None:
+                            update_parts.append('venueName = :vn')
+                            id_vals[':vn'] = ins.get('venueName')
+                            id_vals[':vn2'] = ins.get('venueName') or ins.get('venue_name')
+                        print('InspectionData update (save_item):', update_parts, 'vals:', {k: (v if k in [':u',':ub',':n'] else '...') for k,v in id_vals.items()})
                         insp_data_table.update_item(
                             Key={'inspection_id': inspection_id},
-                            UpdateExpression='SET updatedAt = :u, inspectorName = :n, venueId = :v, venueName = :vn, roomId = :r, roomName = :rn',
-                            ExpressionAttributeValues={':u': now, ':n': ins.get('inspectorName') or (ins.get('item') or {}).get('inspectorName'), ':v': ins.get('venueId'), ':vn': ins.get('venueName'), ':r': room_id, ':rn': ins.get('roomName') or (ins.get('item') or {}).get('roomName')}
+                            UpdateExpression='SET ' + ', '.join(update_parts),
+                            ExpressionAttributeValues=id_vals
                         )
                     except Exception as e:
                         print('Failed to update InspectionData on save_item:', e)
@@ -338,18 +448,20 @@ def lambda_handler(event, context):
                     return build_response(500, {'message': 'Failed to save item', 'error': str(e)})
 
                 # After single-item save, check completeness and mark meta completed if fully PASS
+                meta_completed = False
                 try:
                     c = check_inspection_complete(inspection_id, ins.get('venueId') or ins.get('venue_id') or ins.get('venueId'))
                     if c and c.get('complete'):
+                        meta_completed = True
                         try:
                             meta_key = {pk_attr: inspection_id}
                             if sk_attr:
                                 meta_key[sk_attr] = '__meta__'
                             table.update_item(
                                 Key=meta_key,
-                                UpdateExpression='SET #s = :s, updatedAt = :u',
+                                UpdateExpression='SET #s = :s, updatedAt = :u, completedAt = :c, updatedBy = :ub',
                                 ExpressionAttributeNames={'#s': 'status'},
-                                ExpressionAttributeValues={':s': 'completed', ':u': now}
+                                ExpressionAttributeValues={':s': 'completed', ':u': now, ':c': now, ':ub': ins.get('inspectorName') or ins.get('updatedBy') or ins.get('createdBy')}
                             )
                         except Exception as e:
                             print('Failed to mark meta as completed after save_item:', e)
@@ -360,10 +472,23 @@ def lambda_handler(event, context):
                 insp_data_row = None
                 try:
                     insp_data_table = dynamodb.Table('InspectionData')
+                    # Build InspectionData update dynamically to avoid nulling venue fields
+                    expr_vals = {':u': now, ':ub': ins.get('inspectorName') or ins.get('updatedBy') or (ins.get('item') or {}).get('inspectorName'), ':n': ins.get('inspectorName') or (ins.get('item') or {}).get('inspectorName')}
+                    update_parts = ['updatedAt = :u', 'updatedBy = :ub', 'inspectorName = :n']
+                    if ins.get('venueId') is not None:
+                        update_parts.append('venueId = :v')
+                        expr_vals[':v'] = ins.get('venueId')
+                    if ins.get('venueName') is not None:
+                        update_parts.append('venueName = :vn')
+                        expr_vals[':vn'] = ins.get('venueName')
+                    if meta_completed:
+                        update_parts.append('completedAt = :c')
+                        expr_vals[':c'] = now
+                    print('InspectionData update (post-save):', update_parts, 'vals keys:', list(expr_vals.keys()))
                     insp_data_table.update_item(
                         Key={'inspection_id': inspection_id},
-                        UpdateExpression='SET updatedAt = :u, inspectorName = :n, venueId = :v, venueName = :vn, roomId = :r, roomName = :rn',
-                        ExpressionAttributeValues={':u': now, ':n': ins.get('inspectorName') or (ins.get('item') or {}).get('inspectorName'), ':v': ins.get('venueId'), ':vn': ins.get('venueName'), ':r': room_id, ':rn': ins.get('roomName') or (ins.get('item') or {}).get('roomName')}
+                        UpdateExpression='SET ' + ', '.join(update_parts),
+                        ExpressionAttributeValues=expr_vals
                     )
                     try:
                         resp_meta = insp_data_table.get_item(Key={'inspection_id': inspection_id})
@@ -395,8 +520,28 @@ def lambda_handler(event, context):
                 pk_attr = 'inspection_id'
                 sk_attr = None
             try:
-                now = datetime.utcnow().isoformat()
-                item = {pk_attr: inspection_id, 'createdAt': ins.get('timestamp', now), 'updatedAt': now, 'inspectorName': ins.get('inspectorName'), 'venueId': ins.get('venueId'), 'venueName': ins.get('venueName'), 'roomId': ins.get('roomId'), 'roomName': ins.get('roomName'), 'status': ins.get('status') or 'in-progress'}
+                now = _now_local_iso()
+                # Prefer explicit createdBy/inspectorName, fall back to updatedBy if provided
+                created_by = _coalesce(ins.get('createdBy'), ins.get('inspectorName'), ins.get('updatedBy'))
+                venue_id_val = _coalesce(ins.get('venueId'), ins.get('venue_id'), (ins.get('venue') or {}).get('id'))
+                venue_name_val = _coalesce(ins.get('venueName'), ins.get('venue_name'), (ins.get('venue') or {}).get('name'))
+                # meta rows should NOT include room fields; inspections can span multiple rooms
+                room_id_val = None
+                # If venue id isn't provided but we have a venue name, try to resolve the id server-side
+                if not venue_id_val and venue_name_val:
+                    try:
+                        vtable = dynamodb.Table('VenueRoomData')
+                        # Scan the table and do a simple name match in Python to avoid relying on Expr imports
+                        vresp = vtable.scan()
+                        found_items = [it for it in (vresp.get('Items') or []) if (it.get('name') or '').lower() == (venue_name_val or '').lower()]
+                        if found_items:
+                            venue_id_val = found_items[0].get('venueId') or found_items[0].get('id')
+                            print('Resolved venue_id by name:', venue_id_val)
+                    except Exception as e:
+                        print('Failed to resolve venue id by name:', e)
+                print('create_inspection resolved fields:', {'venueId': venue_id_val, 'venueName': venue_name_val, 'roomId': room_id_val})
+
+                item = {pk_attr: inspection_id, 'createdAt': ins.get('timestamp', now), 'updatedAt': now, 'createdBy': created_by, 'updatedBy': ins.get('updatedBy') or created_by, 'venueId': venue_id_val, 'venueName': venue_name_val, 'venue_name': venue_name_val, 'status': ins.get('status') or 'in-progress', 'completedAt': ins.get('completedAt') or None} 
                 if sk_attr:
                     item[sk_attr] = '__meta__'
                 table.put_item(Item=item)
@@ -409,12 +554,14 @@ def lambda_handler(event, context):
                         'inspection_id': inspection_id,
                         'createdAt': item.get('createdAt'),
                         'updatedAt': now,
-                        'inspectorName': item.get('inspectorName'),
+                        'createdBy': item.get('createdBy'),
+                        'updatedBy': item.get('updatedBy'),
+                        'inspectorName': item.get('inspectorName') or item.get('createdBy'),
                         'venueId': item.get('venueId'),
                         'venueName': item.get('venueName'),
-                        'roomId': item.get('roomId'),
-                        'roomName': item.get('roomName'),
+                        'venue_name': item.get('venue_name'),
                         'status': item.get('status') or 'in-progress',
+                        'completedAt': item.get('completedAt')
                     })
                     try:
                         resp_meta = insp_data_table.get_item(Key={'inspection_id': inspection_id})
@@ -453,7 +600,20 @@ def lambda_handler(event, context):
                     if not it.get('itemId'):
                         is_meta = True
                     if is_meta and it.get(pk_attr):
-                        inspections_list.append({'inspection_id': it.get(pk_attr), 'venueId': it.get('venueId'), 'roomId': it.get('roomId'), 'inspectorName': it.get('inspectorName'), 'createdAt': it.get('createdAt'), 'updatedAt': it.get('updatedAt'), 'status': it.get('status', 'in-progress')})
+                        # Provide both createdBy (and created_by) and inspectorName.
+                        # inspectorName will prefer an explicit inspectorName and fall back to createdBy so the frontend can reliably show the author.
+                        inspections_list.append({
+                            'inspection_id': it.get(pk_attr),
+                            'venueId': it.get('venueId'),
+                            'roomId': it.get('roomId'),
+                            'createdBy': it.get('createdBy') or it.get('created_by') or it.get('inspectorName'),
+                            'inspectorName': it.get('inspectorName') or it.get('createdBy') or it.get('created_by') or '',
+                            'createdAt': it.get('createdAt'),
+                            'updatedAt': it.get('updatedAt'),
+                            'completedAt': it.get('completedAt') or it.get('completed_at') or None,
+                            'venue_name': it.get('venue_name') or it.get('venueName') or None,
+                            'status': it.get('status', 'in-progress')
+                        })
                 return build_response(200, {'inspections': inspections_list})
             except Exception as e:
                 print('Failed to list inspections:', e)

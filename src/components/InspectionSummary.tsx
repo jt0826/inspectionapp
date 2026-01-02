@@ -68,7 +68,7 @@ export function InspectionSummary({
 
     try {
       const token = localStorage.getItem('authToken') || '';
-      const API_BASE = 'https://9d812k40eb.execute-api.ap-southeast-1.amazonaws.com/dev';
+      const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-query';
       const { deleteInspection } = await import('../utils/inspectionApi');
       const result = await deleteInspection(inspection.id, token);
       if (!result || !result.ok) {

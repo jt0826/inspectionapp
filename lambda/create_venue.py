@@ -162,7 +162,7 @@ def lambda_handler(event, context):
             return build_response(400, {'message': 'name and address are required', 'what_we_saw': venue_payload})
 
         venue_id = venue_payload.get('venueId') or f"v-{str(uuid.uuid4())[:8]}"
-        now = datetime.utcnow().isoformat()
+        now = _now_local_iso()
 
         item = {
             'venueId': venue_id,

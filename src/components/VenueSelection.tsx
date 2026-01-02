@@ -6,9 +6,15 @@ interface VenueSelectionProps {
   venues: Venue[];
   onVenueSelect: (venue: Venue) => void;
   onBack: () => void;
+  // If the parent has an active draft inspection, pass its id to avoid creating a duplicate
+  currentInspectionId?: string | null;
+  // If true, the user initiated a "create new inspection" flow (no draft exists yet)
+  isCreatingNewInspection?: boolean;
+  // Notify parent when a new inspection was successfully created on the server
+  onInspectionCreated?: (inspection: any) => void;
 }
 
-export function VenueSelection({ venues, onVenueSelect, onBack }: VenueSelectionProps) {
+export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectionId, isCreatingNewInspection, onInspectionCreated }: VenueSelectionProps) {
   const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
 
   const handleVenueClick = (venue: Venue) => {
@@ -21,34 +27,62 @@ export function VenueSelection({ venues, onVenueSelect, onBack }: VenueSelection
   };
 
   const handleCreateInspection = async () => {
-    if (selectedVenue) {
-      onVenueSelect(selectedVenue);
+    // Only proceed if a venue is selected
+    if (!selectedVenue) {
+      console.warn('No venue selected');
+      return;
     }
+
+    // No draft exists: create a new inspection
     const inspectionId = `inspection-${Date.now()}`; // Generate a unique inspection ID
+    const now = new Date().toISOString();
     const payload = {
-      venue_id: selectedVenue?.id,
-      inspection_id: inspectionId,
-      created_at : new Date().toISOString(),
-      created_by : 'Current User',
-    };
-    try {
-        const response = await fetch('https://resmj1r6l5.execute-api.ap-southeast-1.amazonaws.com/dev', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(payload),
-        });
-  
-        if (response.ok) {
-          console.log('Inspection created successfully');
-        } else {
-          console.error('Failed to create inspection');
-        }
-      } catch (error) {
-        console.error('Error creating inspection:', error);
+      action: 'create_inspection',
+      inspection: {
+        inspection_id: inspectionId,
+        timestamp: now,
+        createdAt: now,
+        updatedAt: now,
+        createdBy: 'Current User',
+        updatedBy: 'Current User',
+        inspectorName: 'Current User',
+        venueId: selectedVenue?.id,
+        venueName: selectedVenue?.name,
+        venue_name: selectedVenue?.name,
+        status: 'in-progress',
+        completedAt: null,
       }
+    };
+
+    try {
+      {/* IMPORTANT: call the new inspections-create resource to create an inspection */}
+      const response = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-create', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        console.log('Inspection created successfully');
+        let data: any = null;
+        try { data = await response.json(); } catch (_) { data = null; }
+        let body = data && data.body ? (typeof data.body === 'string' ? JSON.parse(data.body) : data.body) : data;
+        const created = body?.inspectionData || body?.inspection || body;
+        if (typeof onInspectionCreated === 'function') {
+          onInspectionCreated(created || { inspection_id: inspectionId, createdAt: now, venueId: selectedVenue?.id, venueName: selectedVenue?.name, venue_name: selectedVenue?.name, status: 'in-progress' });
+        }
+        // Notify UI listeners that an inspection was created so counts refresh
+        try {
+          if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('inspectionSaved', { detail: { inspectionId: created?.inspection_id || inspectionId } }));
+        } catch (e) { /* ignore */ }      } else {
+        console.error('Failed to create inspection');
+      }
+    } catch (error) {
+      console.error('Error creating inspection:', error);
     }
+  }
   
 
   return (
@@ -157,13 +191,14 @@ export function VenueSelection({ venues, onVenueSelect, onBack }: VenueSelection
           <div className="fixed bottom-0 left-0 right-0 p-4 lg:p-6 bg-white border-t shadow-lg max-w-4xl mx-auto">
             <button
               onClick={handleCreateInspection}
-              className="w-full py-4 lg:py-5 px-6 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-all shadow-lg hover:shadow-xl flex items-center justify-center gap-3 group"
+              disabled={!selectedVenue}
+              className={`w-full py-4 lg:py-5 px-6 rounded-xl transition-all flex items-center justify-center gap-3 group ${!selectedVenue ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg hover:shadow-xl'}`}
             >
               <CheckCircle2 className="w-6 h-6 lg:w-7 lg:h-7" />
               <div className="text-left flex-1">
                 <div className="font-medium text-base lg:text-lg">Create Inspection</div>
                 <div className="text-xs lg:text-sm text-blue-100">
-                  for {selectedVenue.name}
+                  {selectedVenue ? `for ${selectedVenue.name}` : 'Select a venue to continue'}
                 </div>
               </div>
               <ChevronRight className="w-6 h-6 lg:w-7 lg:h-7 group-hover:translate-x-1 transition-transform" />

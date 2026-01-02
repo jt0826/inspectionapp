@@ -1,9 +1,13 @@
 import json
 import boto3
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
-TABLE_NAME = 'VenueRoomData'
+TABLE_NAME = 'Inspection'
+
+def _now_local_iso():
+    # Return ISO8601 timestamp in local timezone (GMT+8)
+    return datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).isoformat()
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': 'http://localhost:3000',
     'Access-Control-Allow-Headers': 'Content-Type,Authorization',
@@ -35,7 +39,7 @@ def lambda_handler(event, context):
                 body = event['body'] or {}
 
         # Log incoming body for debugging
-        print('create_venue received body:', body)
+        print('create_inspection received body:', body)
 
         # Safety: if body contains nested JSON string in 'body', try to parse it
         if isinstance(body, dict) and isinstance(body.get('body'), str):
@@ -54,77 +58,72 @@ def lambda_handler(event, context):
         # If using single-endpoint style, expect { action: 'create_venue'|'update_venue'|'get_venues', venue: {...} }
         action = body.get('action') or body.get('Action')
         print('action:', action)
-        if action == 'get_venues':
-            # Delegate to scan behavior (same code as get_venues lambda)
-            resp = table.scan()
-            items = resp.get('Items', [])
-            while 'LastEvaluatedKey' in resp:
-                resp = table.scan(ExclusiveStartKey=resp['LastEvaluatedKey'])
-                items.extend(resp.get('Items', []))
-            return build_response(200, {'venues': items})
 
-        # Delete a venue by ID
-        if action == 'delete_venue':
-            venue_id = body.get('venueId') or (body.get('venue') or {}).get('venueId')
-            print('delete_venue id:', venue_id)
-            if not venue_id:
-                return build_response(400, {'message': 'venueId is required for delete_venue'})
+        # Create an inspection: accept payload shaped like VenueSelection.create_inspection
+        if action == 'create_inspection':
+            ins = body.get('inspection') or body
+            inspection_id = ins.get('inspection_id') or ins.get('id')
+            if not inspection_id:
+                return build_response(400, {'message': 'inspection_id is required for create_inspection'})
+
+            # Discover table key schema for Inspection table (to decide sk name)
             try:
-                resp = table.delete_item(Key={'venueId': venue_id}, ReturnValues='ALL_OLD')
-                deleted = resp.get('Attributes')
-                if not deleted:
-                    return build_response(404, {'message': 'Venue not found', 'venueId': venue_id})
-                # TODO: delete related inspections if you have a separate table (not implemented here)
-                return build_response(200, {'message': 'Deleted', 'venue': deleted})
-            except Exception as e:
-                print('Error deleting venue:', e)
-                return build_response(500, {'message': 'Internal server error deleting venue', 'error': str(e)})
-
-        if action not in (None, 'create_venue', 'update_venue'):
-            # For backwards compatibility allow direct create payload
-            pass
-
-        venue_payload = body.get('venue') if action else body
-        # If venue_payload is a JSON string, parse it
-        if isinstance(venue_payload, str):
-            try:
-                venue_payload = json.loads(venue_payload)
+                client = boto3.client('dynamodb')
+                desc = client.describe_table(TableName='Inspection')
+                key_schema = desc.get('Table', {}).get('KeySchema', [])
+                pk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'HASH'), 'inspection_id')
+                sk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'RANGE'), None)
             except Exception:
-                pass
+                pk_attr = 'inspection_id'
+                sk_attr = None
 
-        print('venue_payload:', venue_payload)
+            try:
+                now = _now_local_iso()
+                created_by = ins.get('createdBy') or ins.get('inspectorName') or ins.get('updatedBy') or 'Unknown'
+                venue_id_val = ins.get('venueId') or ins.get('venue_id') or (ins.get('venue') or {}).get('id')
+                venue_name_val = ins.get('venueName') or ins.get('venue_name') or (ins.get('venue') or {}).get('name')
 
-        # Validate required fields
-        name = venue_payload.get('name') if venue_payload else None
-        address = venue_payload.get('address') if venue_payload else None
-        if not name or not address:
-            return build_response(400, {'message': 'name and address are required', 'what_we_saw': venue_payload})
+                # Build meta item for Inspection table
+                meta_item = {pk_attr: inspection_id, 'createdAt': ins.get('timestamp', now), 'updatedAt': now, 'createdBy': created_by, 'updatedBy': ins.get('updatedBy') or created_by, 'inspectorName': ins.get('inspectorName') or created_by, 'venueId': venue_id_val, 'venueName': venue_name_val, 'venue_name': venue_name_val, 'status': ins.get('status') or 'in-progress', 'completedAt': ins.get('completedAt') or None}
+                if sk_attr:
+                    meta_item[sk_attr] = '__meta__'
 
-        venue_id = venue_payload.get('venueId') or f"v-{str(uuid.uuid4())[:8]}"
-        now = datetime.utcnow().isoformat()
+                insp_table = dynamodb.Table('Inspection')
+                insp_table.put_item(Item=meta_item)
 
-        item = {
-            'venueId': venue_id,
-            'name': name,
-            'address': address,
-            'createdAt': venue_payload.get('createdAt', now),
-            'updatedAt': venue_payload.get('updatedAt', now),
-            'createdBy': venue_payload.get('createdBy', 'Unknown'),
-            'rooms': venue_payload.get('rooms', [])
-        }
+                # Upsert into InspectionData for quick listing
+                insp_data_row = None
+                try:
+                    insp_data_table = dynamodb.Table('InspectionData')
+                    insp_data_table.put_item(Item={
+                        'inspection_id': inspection_id,
+                        'createdAt': meta_item.get('createdAt'),
+                        'updatedAt': now,
+                        'createdBy': meta_item.get('createdBy'),
+                        'updatedBy': meta_item.get('updatedBy'),
+                        'inspectorName': meta_item.get('inspectorName'),
+                        'venueId': meta_item.get('venueId'),
+                        'venueName': meta_item.get('venueName'),
+                        'venue_name': meta_item.get('venue_name'),
+                        'status': meta_item.get('status') or 'in-progress',
+                        'completedAt': meta_item.get('completedAt')
+                    })
+                    try:
+                        resp_meta = insp_data_table.get_item(Key={'inspection_id': inspection_id})
+                        insp_data_row = resp_meta.get('Item')
+                    except Exception:
+                        insp_data_row = None
+                except Exception as e:
+                    print('Failed to upsert InspectionData meta on create_inspection:', e)
 
-        table = dynamodb.Table(TABLE_NAME)
+                return build_response(200, {'message': 'Created', 'inspection_id': inspection_id, 'inspectionData': insp_data_row})
+            except Exception as e:
+                print('Failed to create inspection meta:', e)
+                return build_response(500, {'message': 'Failed to create inspection', 'error': str(e)})
 
-        if action == 'update_venue' and venue_payload.get('venueId'):
-            # Overwrite / upsert the venue
-            table.put_item(Item=item)
-            return build_response(200, {'message': 'Updated', 'venue': item})
-
-        # Default: create
-        table.put_item(Item=item)
-
-        return build_response(200, {'message': 'Created', 'venue': item})
+        # For this lambda we only support create_inspection action; other actions are not supported here
+        return build_response(400, {'message': 'Unsupported action for create_inspection lambda', 'action': action})
 
     except Exception as e:
-        print('Error creating venue:', e)
+        print('Error creating inspection:', e)
         return build_response(500, {'message': 'Internal server error', 'error': str(e)})

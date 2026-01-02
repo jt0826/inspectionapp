@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ArrowLeft, Building2, Plus, Trash2, Save, Minus } from 'lucide-react';
 import { Venue, Room } from '../App';
 
-const API_BASE = 'https://mt8t6krmk8.execute-api.ap-southeast-1.amazonaws.com/dev'; // update if different
+const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/venues-create'; // consolidated venues-create endpoint
 
 interface VenueFormProps {
   venue: Venue | null;

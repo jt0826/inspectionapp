@@ -33,7 +33,6 @@ export interface Room {
 
 export interface InspectionItem {
   id: string;
-  category: string;
   item: string;
   status: 'pass' | 'fail' | 'na' | 'pending' | null;
   notes: string;
@@ -116,7 +115,8 @@ function AppContent() {
   const [currentView, setCurrentView] = useState<View>('home');
   // Replace hard-coded venues with data from backend
   const [venues, setVenues] = useState<Venue[]>([]);
-  const API_BASE = 'https://n7yxt09phk.execute-api.ap-southeast-1.amazonaws.com/dev'; // replace with your API base URL
+  // Use consolidated venueslh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/venues-query
+  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/venues-query'; // replace with your API base URL (venues)
 
 
 
@@ -175,7 +175,7 @@ function AppContent() {
 
   const fetchDbInspections = async () => {
     try {
-      const res = await fetch('https://9d812k40eb.execute-api.ap-southeast-1.amazonaws.com/dev', {
+      const res = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'list_inspections' }),
@@ -210,6 +210,8 @@ function AppContent() {
   const [editingInspection, setEditingInspection] = useState<Inspection | null>(null);
   const [editingInspectionIndex, setEditingInspectionIndex] = useState<number | null>(null);
   const [currentInspectionId, setCurrentInspectionId] = useState<string | null>(null);
+  // When true, user has initiated "Create New Inspection" but we haven't created it on the server yet
+  const [isCreatingNewInspection, setIsCreatingNewInspection] = useState<boolean>(false);
 
   const handleVenueSelect = (venue: Venue) => {
     setSelectedVenue(venue);
@@ -222,14 +224,27 @@ function AppContent() {
           : insp
       ));
 
-      // Persist venue selection to the server for the current draft
+      // Persist venue selection to the inspections service for the current draft (include updated metadata)
       (async () => {
         try {
-          await fetch(API_BASE, {
+          const resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'save_inspection', inspection: { inspection_id: currentInspectionId, venueId: venue.id, venueName: venue.name, timestamp: new Date().toISOString() } }),
+            body: JSON.stringify({
+              action: 'save_inspection',
+              inspection: {
+                inspection_id: currentInspectionId,
+                venueId: venue.id,
+                venueName: venue.name,
+                venue_name: venue.name,
+                updatedAt: new Date().toISOString(),
+                updatedBy: user?.name || 'Unknown'
+              }
+            }),
           });
+          if (resp && resp.ok) {
+            try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('inspectionSaved', { detail: { inspectionId: currentInspectionId } })); } catch (e) { /* ignore */ }
+          }
         } catch (e) {
           console.warn('Failed to persist venue selection for inspection:', e);
         }
@@ -253,14 +268,26 @@ function AppContent() {
           : insp
       ));
 
-      // Persist room selection to the server so the draft is fully associated
+      // Persist room selection to the inspections service so the draft is fully associated (include updated metadata)
       (async () => {
         try {
-          await fetch(API_BASE, {
+          const resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'save_inspection', inspection: { inspection_id: currentInspectionId, roomId: room.id, roomName: room.name, timestamp: new Date().toISOString() } }),
+            body: JSON.stringify({
+              action: 'save_inspection',
+              inspection: {
+                inspection_id: currentInspectionId,
+                roomId: room.id,
+                roomName: room.name,
+                updatedAt: new Date().toISOString(),
+                updatedBy: user?.name || 'Unknown'
+              }
+            }),
           });
+          if (resp && resp.ok) {
+            try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('inspectionSaved', { detail: { inspectionId: currentInspectionId } })); } catch (e) { /* ignore */ }
+          }
         } catch (e) {
           console.warn('Failed to persist room selection for inspection:', e);
         }
@@ -314,38 +341,52 @@ function AppContent() {
   };
 
   const handleCreateNewInspection = () => {
-    // Create a draft inspection
-    const newInspection: Inspection = {
-      id: 'insp_' + Date.now(),
-      venueId: '',
-      venueName: '',
-      roomId: '',
-      roomName: '',
-      timestamp: new Date().toISOString(),
-      inspectorName: user?.name || 'Unknown',
-      items: [],
-      status: 'draft',
-    };
-    
-    setInspections([...inspections, newInspection]);
-    setCurrentInspectionId(newInspection.id);
-
-    // Persist a draft meta record so it can be resumed later
-    (async () => {
-      try {
-        await fetch(API_BASE, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'create_inspection', inspection: { inspection_id: newInspection.id, timestamp: newInspection.timestamp, inspectorName: newInspection.inspectorName } }),
-        });
-      } catch (e) {
-        console.warn('Failed to create inspection draft on server:', e);
-      }
-    })();
-
+    // Start a create flow but DO NOT create a draft on the server yet.
+    // The actual inspection will be created when the user presses Create in the VenueSelection.
+    setIsCreatingNewInspection(true);
+    setSelectedVenue(null);
+    setSelectedRoom(null);
     setCurrentView('selectVenue');
   };
 
+  // Called by VenueSelection when a new inspection was created on the server
+  const handleInspectionCreated = (inspectionData: any) => {
+    const id = inspectionData.inspection_id || inspectionData.id;
+    const simpleInspection: Inspection = {
+      id,
+      venueId: inspectionData.venueId || inspectionData.venue_id || '',
+      venueName: inspectionData.venueName || inspectionData.venue_name || '',
+      roomId: inspectionData.roomId || inspectionData.room_id || '',
+      roomName: inspectionData.roomName || inspectionData.room_name || '',
+      timestamp: inspectionData.createdAt || inspectionData.timestamp || new Date().toISOString(),
+      inspectorName: inspectionData.createdBy || inspectionData.inspectorName || user?.name || 'Unknown',
+      items: [],
+      status: (inspectionData.status as any) || 'in-progress',
+    };
+
+    setInspections(prev => [...prev, simpleInspection]);
+    setCurrentInspectionId(id);
+    setIsCreatingNewInspection(false);
+
+    // Set the selected venue so UI reflects the created inspection's venue
+    const vid = simpleInspection.venueId;
+    if (vid) {
+      const v = venues.find(x => x.id === vid);
+      if (v) {
+        setSelectedVenue(v);
+        setCurrentView('confirmInspection');
+        return;
+      }
+      // If venue not found locally, refresh venues then set
+      fetchVenues().then(() => {
+        const vv = venues.find(x => x.id === vid);
+        if (vv) setSelectedVenue(vv);
+        setCurrentView('confirmInspection');
+      }).catch(() => setCurrentView('confirmInspection'));
+    } else {
+      setCurrentView('confirmInspection');
+    }
+  };
   const fetchInspectionItems = async (inspectionId: string, roomId?: string) => {
     try {
       const items = await getInspectionItems(inspectionId);
@@ -377,7 +418,11 @@ function AppContent() {
               // fetch existing saved items for this inspection and room
               fetchInspectionItems(inspectionOrId, room.id).then((items) => {
                 if (items && items.length > 0) {
-                  const mapped = items.map((it: any) => ({ id: it.itemId || it.item || it.ItemId || ('item_' + Math.random().toString(36).substr(2,9)), category: 'General', item: it.itemName || it.item || it.ItemName || '', status: it.status, notes: it.comments || '' }));
+                  const mapped = items.map((it: any) => {
+                    const id = it.itemId || it.item || it.ItemId || ('item_' + Math.random().toString(36).substr(2,9));
+                    const name = it.itemName || it.item || it.ItemName || '';
+                    return { id, item: name, status: it.status, notes: it.comments || '' };
+                  });
                   setEditingInspection({ ...inspection, items: mapped });
 
                   // Upsert into local inspections state so UI (RoomList) can reflect progress
@@ -437,7 +482,11 @@ function AppContent() {
           // fetch saved items for this inspection & room, then set editingInspection
           fetchInspectionItems(id, room.id).then((items) => {
             if (items && items.length > 0) {
-              const mapped = items.map((it: any) => ({ id: it.itemId || it.item || it.ItemId || ('item_' + Math.random().toString(36).substr(2,9)), category: 'General', item: it.itemName || it.item || it.ItemName || '', status: it.status, notes: it.comments || '' }));
+              const mapped = items.map((it: any) => {
+                const id = it.itemId || it.item || it.ItemId || ('item_' + Math.random().toString(36).substr(2,9));
+                const name = it.itemName || it.item || it.ItemName || '';
+                return { id, item: name, status: it.status, notes: it.comments || '' };
+              });
               setEditingInspection({ ...simpleInspection, items: mapped });
             }
           }).catch(() => {});
@@ -470,6 +519,7 @@ function AppContent() {
   };
 
   const handleBackFromVenueSelect = () => {
+    setIsCreatingNewInspection(false);
     setCurrentView('home');
   };
 
@@ -654,6 +704,9 @@ function AppContent() {
           venues={venues}
           onVenueSelect={handleVenueSelect}
           onBack={handleBackFromVenueSelect}
+          currentInspectionId={currentInspectionId}
+          isCreatingNewInspection={isCreatingNewInspection}
+          onInspectionCreated={handleInspectionCreated}
         />
       )}
 

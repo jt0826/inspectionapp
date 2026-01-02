@@ -62,7 +62,8 @@ export function Reports({ inspections, venues, onBack }: ReportsProps) {
     const categories = ['Safety', 'Cleanliness', 'Maintenance', 'Equipment', 'Compliance'];
     const categoryStats = categories.map((category) => {
       const categoryItems = filteredInspections.flatMap((i) =>
-        i.items.filter((item) => item.category === category)
+        // Items may not have category property anymore, so tolerate missing values
+        (i.items as any[]).filter((item) => (item as any).category === category)
       );
       const passed = categoryItems.filter((item) => item.status === 'pass').length;
       const failed = categoryItems.filter((item) => item.status === 'fail').length;

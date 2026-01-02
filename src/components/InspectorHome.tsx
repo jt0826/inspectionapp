@@ -2,9 +2,12 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { ClipboardCheck, Plus, History, User, Building2, LogOut, Clock, AlertCircle, CheckCircle2, XCircle, Trash2 } from 'lucide-react';
 import { Inspection } from '../App';
 import { getInspectionSummary, checkInspectionComplete, getInspectionItems } from '../utils/inspectionApi';
+import NumberFlow from '@number-flow/react';
+import FadeInText from './FadeInText';
 import { computeExpectedTotalsFromVenue, computeExpectedByRoomFromVenue } from '../utils/inspectionHelpers';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from './ToastProvider';
+import FadeIn from 'react-fade-in';
 
 type Room = { id?: string; roomId?: string; items?: Record<string, unknown>[]; name?: string };
 type Venue = { id?: string; venueId?: string; name?: string; rooms?: Room[] };
@@ -40,17 +43,29 @@ export function InspectorHome({
   const [venuesMap, setVenuesMap] = useState<Record<string, string>>({});
   const [inspectionSummaries, setInspectionSummaries] = useState<Record<string, unknown>>({});
   const [completedMap, setCompletedMap] = useState<Record<string, boolean>>({});
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
 
   // Local UI state for delete flow
   const [deleting, setDeleting] = useState(false);
   const { show, confirm } = useToast();
   const [activeCount, setActiveCount] = useState<number | null>(null);
 
+  // Helper: tolerant accessor for fields that may be present under different names
+  const pick = (rec: Record<string, unknown> | null | undefined, ...keys: string[]) => {
+    if (!rec) return '';
+    for (const k of keys) {
+      const v = (rec as any)[k];
+      if (v !== undefined && v !== null && v !== '') return String(v);
+    }
+    return '';
+  };
+
   // Fetch inspections from DynamoDB (reusable)
   const fetchInspections = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch('https://9d812k40eb.execute-api.ap-southeast-1.amazonaws.com/dev', {
+      const response = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-query', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -89,7 +104,7 @@ export function InspectorHome({
   // Fetch venues from backend to map venueId -> name (if not provided via props)
   const fetchVenues = useCallback(async () => {
     try {
-      const res = await fetch('https://n7yxt09phk.execute-api.ap-southeast-1.amazonaws.com/dev', {
+      const res = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/venues-query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'get_venues' }),
@@ -168,91 +183,26 @@ export function InspectorHome({
           // ignore optimistic seed errors
         }
 
-        for (const id of ids) {
-          // Fetch each summary in a helper to keep try/catch scopes clear and avoid parser confusion
+        // Fetch summaries in parallel to avoid sequential delays that make lastUpdated appear late
+        const summariesArray = await Promise.all(ids.map(async (inspectionId: string) => {
           try {
-            const summary = await (async (inspectionId: string) => {
-              // Try the summary endpoint first
-              let res: any = null;
-              try {
-                res = await getInspectionSummary(inspectionId);
-              } catch (err) {
-                console.warn('getInspectionSummary failed', inspectionId, err);
-                res = null;
-              }
+            // Try the summary endpoint first
+            let res: any = null;
+            try {
+              res = await getInspectionSummary(inspectionId);
+            } catch (err) {
+              console.warn('getInspectionSummary failed', inspectionId, err);
+              res = null;
+            }
 
-              // If the summary endpoint returned enough data, enrich it with lastUpdated info
-              if (res && res.totals && res.byRoom) {
-                let latestTs: string | null = null;
-                let latestBy: string | null = null;
-                try {
-                  const items = (await getInspectionItems(inspectionId)) || [];
-                  for (const it of items) {
-                    const itRec = it as Record<string, unknown>;
-                    const tsRaw = itRec['updatedAt'] || itRec['updated_at'] || itRec['createdAt'] || itRec['created_at'];
-                    const ts = tsRaw ? String(tsRaw) : null;
-                    if (ts && (!latestTs || new Date(ts) > new Date(latestTs))) {
-                      latestTs = ts;
-                      const byRaw = itRec['inspectorName'] || itRec['createdBy'] || itRec['inspector_name'] || itRec['created_by'] || null;
-                      latestBy = byRaw ? String(byRaw) : null;
-                    }
-                  }
-                } catch (e) {
-                  console.warn('Failed to fetch items for lastUpdated', inspectionId, e);
-                }
-
-                // Ensure totals include pending items expected by venue definition if DB reports fewer items
-                try {
-                  const meta = dynamoInspections.find((d: Record<string, unknown>) => String(d['inspection_id'] || '') === inspectionId) || {};
-                  const venueId = String((meta as Record<string, unknown>)['venueId'] || (meta as Record<string, unknown>)['venue_id'] || (meta as Record<string, unknown>)['venue'] || '');
-                  let expectedTotal = 0;
-                  if (venueId) {
-                    const venueObj = (venues || []).find((v: Venue) => String(v.id || v.venueId) === String(venueId));
-                    if (venueObj) {
-                      const rooms = (venueObj.rooms || []) as Room[];
-                      expectedTotal = rooms.reduce((s: number, r: Room) => s + ((r.items || []).length || 0), 0);
-                    }
-                  }
-                  if (expectedTotal > 0) {
-                    const t = res.totals || { pass: 0, fail: 0, na: 0, pending: 0, total: 0 };
-                    const known = (t.pass || 0) + (t.fail || 0) + (t.na || 0);
-                    t.pending = Math.max(0, expectedTotal - known);
-                    t.total = known + t.pending;
-                    res.totals = t;
-                  }
-                } catch (e) {
-                  console.warn('Failed to enrich totals with expected items', inspectionId, e);
-                }
-
-                return { ...res, inspection_id: inspectionId, lastUpdated: latestTs, lastUpdatedBy: latestBy };
-              }
-
-              // Fallback: query raw items and compute totals using centralized helper
+            // If the summary endpoint returned enough data, enrich it with lastUpdated info (compute from items in parallel)
+            if (res && res.totals && res.byRoom) {
+              let latestTs: string | null = null;
+              let latestBy: string | null = null;
               try {
                 const items = (await getInspectionItems(inspectionId)) || [];
-
-                const totals = { pass: 0, fail: 0, na: 0, pending: 0, total: 0 };
-                const byRoom: Record<string, { pass: number; fail: number; na: number; pending: number; total: number }> = {};
-                let latestTs: string | null = null;
-                let latestBy: string | null = null;
-                for (const it of items as Record<string, unknown>[]) {
+                for (const it of items) {
                   const itRec = it as Record<string, unknown>;
-                  const rid = (itRec['roomId'] as string) || (itRec['room_id'] as string) || (itRec['room'] as string) || '';
-                  if (!rid) continue;
-                  const status = ((itRec['status'] as string) || 'pending').toString().toLowerCase();
-                  totals.total += 1;
-                  if (status === 'pass') totals.pass++;
-                  else if (status === 'fail') totals.fail++;
-                  else if (status === 'na') totals.na++;
-                  else totals.pending++;
-
-                  const br = byRoom[rid] || (byRoom[rid] = { pass: 0, fail: 0, na: 0, pending: 0, total: 0 });
-                  br.total += 1;
-                  if (status === 'pass') br.pass++;
-                  else if (status === 'fail') br.fail++;
-                  else if (status === 'na') br.na++;
-                  else br.pending++;
-
                   const tsRaw = itRec['updatedAt'] || itRec['updated_at'] || itRec['createdAt'] || itRec['created_at'];
                   const ts = tsRaw ? String(tsRaw) : null;
                   if (ts && (!latestTs || new Date(ts) > new Date(latestTs))) {
@@ -261,48 +211,185 @@ export function InspectorHome({
                     latestBy = byRaw ? String(byRaw) : null;
                   }
                 }
+              } catch (e) {
+                console.warn('Failed to fetch items for lastUpdated', inspectionId, e);
+              }
 
-                // If DB has fewer items than expected by venue definition, default missing ones to pending
-                try {
-                  const meta = dynamoInspections.find((d: Record<string, unknown>) => String(d['inspection_id'] || '') === inspectionId) || {};
-                  const venueId = String((meta as Record<string, unknown>)['venueId'] || (meta as Record<string, unknown>)['venue_id'] || (meta as Record<string, unknown>)['venue'] || '');
-                  if (venueId) {
-                    const venueObj = (venues || []).find((v: Venue) => String(v.id || v.venueId) === venueId) || null;
-                    if (venueObj) {
-                      const rooms = (venueObj.rooms || []) as Room[];
-                      rooms.forEach((r: Room) => {
-                        const rid = String(r.id || r.roomId || '');
-                        if (!byRoom[rid]) {
-                          byRoom[rid] = { pass: 0, fail: 0, na: 0, pending: ((r.items || []) as Record<string, unknown>[]).length || 0, total: ((r.items || []) as Record<string, unknown>[]).length || 0 };
-                        }
-                      });
+              // Ensure totals include pending items expected by venue definition if DB reports fewer items
+              try {
+                const meta = dynamoInspections.find((d: Record<string, unknown>) => String(d['inspection_id'] || '') === inspectionId) || {};
+                const venueId = String((meta as Record<string, unknown>)['venueId'] || (meta as Record<string, unknown>)['venue_id'] || (meta as Record<string, unknown>)['venue'] || '');
+                let expectedTotal = 0;
+                if (venueId) {
+                  const venueObj = (venues || []).find((v: Venue) => String(v.id || v.venueId) === String(venueId));
+                  if (venueObj) {
+                    const rooms = (venueObj.rooms || []) as Room[];
+                    expectedTotal = rooms.reduce((s: number, r: Room) => s + ((r.items || []).length || 0), 0);
+                  }
+                }
+                if (expectedTotal > 0) {
+                  const t = res.totals || { pass: 0, fail: 0, na: 0, pending: 0, total: 0 };
+                  const known = (t.pass || 0) + (t.fail || 0) + (t.na || 0);
+                  t.pending = Math.max(0, expectedTotal - known);
+                  t.total = known + t.pending;
+                  res.totals = t;
+                }
+              } catch (e) {
+                console.warn('Failed to enrich totals with expected items', inspectionId, e);
+              }
 
-                      const expectedTotal = ((venueObj.rooms || []) as Room[]).reduce((s: number, r: Room) => s + (((r.items || []) as Record<string, unknown>[]).length || 0), 0);
+              return { ...res, inspection_id: inspectionId, lastUpdated: latestTs, lastUpdatedBy: latestBy };
+            }
+
+            // Fallback: query raw items and compute totals using centralized helper
+            try {
+              const items = (await getInspectionItems(inspectionId)) || [];
+
+              const totals = { pass: 0, fail: 0, na: 0, pending: 0, total: 0 };
+              const byRoom: Record<string, { pass: number; fail: number; na: number; pending: number; total: number }> = {};
+              let latestTs: string | null = null;
+              let latestBy: string | null = null;
+              for (const it of items as Record<string, unknown>[]) {
+                const itRec = it as Record<string, unknown>;
+                const rid = (itRec['roomId'] as string) || (itRec['room_id'] as string) || (itRec['room'] as string) || '';
+                if (!rid) continue;
+                const status = ((itRec['status'] as string) || 'pending').toString().toLowerCase();
+                totals.total += 1;
+                if (status === 'pass') totals.pass++;
+                else if (status === 'fail') totals.fail++;
+                else if (status === 'na') totals.na++;
+                else totals.pending++;
+
+                const br = byRoom[rid] || (byRoom[rid] = { pass: 0, fail: 0, na: 0, pending: 0, total: 0 });
+                br.total += 1;
+                if (status === 'pass') br.pass++;
+                else if (status === 'fail') br.fail++;
+                else if (status === 'na') br.na++;
+                else br.pending++;
+
+                const tsRaw = itRec['updatedAt'] || itRec['updated_at'] || itRec['createdAt'] || itRec['created_at'];
+                const ts = tsRaw ? String(tsRaw) : null;
+                if (ts && (!latestTs || new Date(ts) > new Date(latestTs))) {
+                  latestTs = ts;
+                  const byRaw = itRec['inspectorName'] || itRec['createdBy'] || itRec['inspector_name'] || itRec['created_by'] || null;
+                  latestBy = byRaw ? String(byRaw) : null;
+                }
+              }
+
+              // If DB has fewer items than expected by venue definition, default missing ones to pending
+              try {
+                const meta = dynamoInspections.find((d: Record<string, unknown>) => String(d['inspection_id'] || '') === inspectionId) || {};
+                const venueId = String((meta as Record<string, unknown>)['venueId'] || (meta as Record<string, unknown>)['venue_id'] || (meta as Record<string, unknown>)['venue'] || '');
+                if (venueId) {
+                  const venueObj = (venues || []).find((v: Venue) => String(v.id || v.venueId) === venueId) || null;
+                  if (venueObj) {
+                    const rooms = (venueObj.rooms || []) as Room[];
+                    rooms.forEach((r: Room) => {
+                      const rid = String(r.id || r.roomId || '');
+                      if (!byRoom[rid]) {
+                        byRoom[rid] = { pass: 0, fail: 0, na: 0, pending: ((r.items || []) as Record<string, unknown>[]).length || 0, total: ((r.items || []) as Record<string, unknown>[]).length || 0 };
+                      }
+                    });
+
+                    const expectedTotal = ((venueObj.rooms || []) as Room[]).reduce((s: number, r: Room) => s + (((r.items || []) as Record<string, unknown>[]).length || 0), 0);
+                    const known = (totals.pass || 0) + (totals.fail || 0) + (totals.na || 0);
+                    totals.pending = Math.max(0, expectedTotal - known);
+                    totals.total = known + totals.pending;
+                  }
+                }
+              } catch (e) {
+                console.warn('Failed to enrich fallback totals', inspectionId, e);
+              }
+
+              return { inspection_id: inspectionId, totals, byRoom, lastUpdated: latestTs, lastUpdatedBy: latestBy };
+            } catch (e) {
+              console.warn('Fallback get_inspection failed for', inspectionId, e);
+              return null;
+            }
+          } catch (e) {
+            console.warn('summary fetch failed', inspectionId, e);
+            return null;
+          }
+        }));
+
+        // Convert array back to keyed results for the rest of the code
+        for (const s of summariesArray) {
+          if (s && s.inspection_id) results[String(s.inspection_id)] = s;
+        }
+
+        setInspectionSummaries(results);
+
+        // Reconcile incomplete totals: retry fetching items for inspections whose totals are smaller than venue expected
+        (async function reconcileTotals() {
+          try {
+            const toCheck: string[] = [];
+            (dynamoInspections || []).forEach((meta) => {
+              const id = String((meta as any)['inspection_id'] || '');
+              if (!id) return;
+              const summary = results[id] as any;
+
+              // determine expected total from venue definition
+              let expectedTotal = 0;
+              const venueId = String((meta as any)['venueId'] || (meta as any)['venue_id'] || '');
+              if (venueId) {
+                const venueObj = (venues || []).find((v: Venue) => String((v as any).id || (v as any).venueId) === String(venueId));
+                if (venueObj) expectedTotal = ((venueObj.rooms || []) as Room[]).reduce((s, r) => s + (((r.items || []) as any[]).length || 0), 0);
+              }
+
+              if (!summary || !summary.totals || (expectedTotal > 0 && (summary.totals.total || 0) < expectedTotal)) {
+                toCheck.push(id);
+              }
+            });
+
+            if (toCheck.length > 0) {
+              const maxAttempts = 3;
+              for (let attempt = 1; attempt <= maxAttempts && toCheck.length > 0; attempt++) {
+                // Backoff between retries
+                await new Promise((r) => setTimeout(r, 500 * attempt));
+                for (const id of [...toCheck]) {
+                  try {
+                    const items = (await getInspectionItems(id)) || [];
+                    const totals: any = { pass: 0, fail: 0, na: 0, pending: 0, total: 0 };
+                    for (const it of items as Record<string, any>[]) {
+                      const status = String((it.status || it.state || 'pending')).toLowerCase();
+                      totals.total += 1;
+                      if (status === 'pass') totals.pass++;
+                      else if (status === 'fail') totals.fail++;
+                      else if (status === 'na') totals.na++;
+                      else totals.pending++;
+                    }
+
+                    // If we know expectedTotal, ensure pending accounts for missing items
+                    const meta = dynamoInspections.find((d: any) => String(d['inspection_id'] || '') === id) || {};
+                    const venueId = String(meta['venueId'] || meta['venue_id'] || '');
+                    let expectedTotal = 0;
+                    if (venueId) {
+                      const venueObj = (venues || []).find((v: Venue) => String((v as any).id || (v as any).venueId) === String(venueId));
+                      if (venueObj) expectedTotal = ((venueObj.rooms || []) as Room[]).reduce((s, r) => s + (((r.items || []) as any[]).length || 0), 0);
+                    }
+                    if (expectedTotal > 0) {
                       const known = (totals.pass || 0) + (totals.fail || 0) + (totals.na || 0);
                       totals.pending = Math.max(0, expectedTotal - known);
                       totals.total = known + totals.pending;
                     }
+
+                    results[id] = { ...(results[id] || {}), totals };
+
+                    if (expectedTotal > 0 && totals.total >= expectedTotal) {
+                      const idx = toCheck.indexOf(id);
+                      if (idx >= 0) toCheck.splice(idx, 1);
+                    }
+                  } catch (e) {
+                    // ignore per-inspection errors
                   }
-                } catch (e) {
-                  console.warn('Failed to enrich fallback totals', inspectionId, e);
                 }
-
-                return { inspection_id: inspectionId, totals, byRoom, lastUpdated: latestTs, lastUpdatedBy: latestBy };
-              } catch (e) {
-                console.warn('Fallback get_inspection failed for', inspectionId, e);
-                return null;
+                setInspectionSummaries({ ...results });
               }
-            })(id);
-
-            if (summary) {
-              results[id] = summary;
             }
           } catch (e) {
-            console.warn('summary fetch failed', id, e);
+            console.warn('Failed to reconcile incomplete totals', e);
           }
-        }
-
-        setInspectionSummaries(results);
+        })();
 
         // Compute active (uncompleted) inspection count by asking backend whether each inspection is complete
         (async () => {
@@ -357,12 +444,13 @@ export function InspectorHome({
         id: String(inspection['inspection_id'] || ''),
         venueName: String(venueName),
         roomName: String(roomName),
-        timestamp: String(inspection['created_at'] as string || ''),
+        timestamp: pick(inspection, 'createdAt', 'created_at', 'timestamp', 'createdAt'),
         venueId: String(vid),
         roomId: String((inspection['room_id'] as string) || ''),
         status: String((inspection['status'] as string) || 'draft'),
         items: (inspection['items'] as unknown[]) || [],
-        inspectorName: String(inspection['created_by'] as string || ''),
+        inspectorName: pick(inspection, 'inspectorName', 'createdBy', 'created_by'),
+        createdBy: pick(inspection, 'createdBy', 'created_by', 'inspectorName'),
         raw: inspection,
       };
     });
@@ -373,9 +461,9 @@ export function InspectorHome({
     if (!dateString) return '';
     const date = new Date(String(dateString));
     if (isNaN(date.getTime())) return String(dateString);
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
+    return date.toLocaleString('en-GB', {
+      day: '2-digit',
+      month: '2-digit',
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
@@ -402,21 +490,40 @@ export function InspectorHome({
         id: String(inspection['inspection_id'] || ''),
         venueName: String(venueName),
         roomName: String(roomName),
-        timestamp: String((inspection['created_at'] as string) || (inspection['updated_at'] as string) || (inspection['timestamp'] as string) || ''),
-        updatedAt: String((inspection['updated_at'] as string) || (inspection['updatedAt'] as string) || ''),
+        timestamp: pick(inspection, 'createdAt', 'created_at', 'timestamp', 'createdAt'),
+        updatedAt: pick(inspection, 'updatedAt', 'updated_at', 'timestamp'),
+        completedAt: pick(inspection, 'completedAt', 'completed_at', 'updatedAt', 'updated_at'),
         venueId: String(vid),
         roomId: String((inspection['room_id'] as string) || ''),
         status: String((inspection['status'] as string) || 'completed'),
         items: (inspection['items'] as unknown[]) || [],
-        inspectorName: String(inspection['created_by'] as string || ''),
+        inspectorName: pick(inspection, 'inspectorName', 'createdBy', 'created_by'),
+        createdBy: pick(inspection, 'createdBy', 'created_by', 'inspectorName'),
         raw: inspection,
       };
     });
 
   // Show only the most recent N completed inspections on the Home page to avoid clutter
   const MAX_HOME_COMPLETED = 6;
-  const displayedCompletedInspections = [...completedInspections]
-    .sort((a: any, b: any) => new Date((b.updatedAt || b.timestamp) as string).getTime() - new Date((a.updatedAt || a.timestamp) as string).getTime())
+
+  const filteredCompletedInspections = completedInspections.filter((ins) => {
+    const raw = (ins as any).completedAt || (ins as any).updatedAt || (ins as any).timestamp;
+    if (!raw) return false;
+    const d = new Date(String(raw));
+    if (isNaN(d.getTime())) return false;
+    if (startDate) {
+      const s = new Date(startDate + 'T00:00:00');
+      if (d < s) return false;
+    }
+    if (endDate) {
+      const e = new Date(endDate + 'T23:59:59');
+      if (d > e) return false;
+    }
+    return true;
+  });
+
+  const displayedCompletedInspections = [...filteredCompletedInspections]
+    .sort((a: any, b: any) => new Date((b.completedAt || b.updatedAt || b.timestamp) as string).getTime() - new Date((a.completedAt || a.updatedAt || a.timestamp) as string).getTime())
     .slice(0, MAX_HOME_COMPLETED);
 
   const getInspectionProgress = (inspection: Inspection) => {
@@ -557,9 +664,11 @@ export function InspectorHome({
           <div className="flex items-center justify-between mb-4 lg:mb-6">
             <h2 className="text-gray-700 text-lg lg:text-xl">Ongoing Inspections</h2>
             {( (activeCount ?? ongoingInspections.length) > 0 ) && (
-              <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-sm">
-                {activeCount ?? ongoingInspections.length} active
-              </span>
+              <FadeIn className="inline-block" delay={120} transitionDuration={300}>
+                <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-sm">
+                  {activeCount ?? ongoingInspections.length} active
+                </span>
+              </FadeIn>
             )}
           </div>
 
@@ -581,11 +690,11 @@ export function InspectorHome({
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-6">
-              {ongoingInspections.map((inspection) => (
-                <div
-                  key={inspection.id}
-                  className="border-2 border-orange-200 bg-orange-50 rounded-lg overflow-hidden hover:border-orange-400 hover:shadow-lg transition-all"
-                >
+              {ongoingInspections.map((inspection, idx) => (
+                <FadeIn key={inspection.id} delay={80 + idx * 40} transitionDuration={300}>
+                  <div
+                    className="border-2 border-orange-200 bg-orange-50 rounded-lg overflow-hidden hover:border-orange-400 hover:shadow-lg transition-all"
+                  >
                   <button
                     onClick={() => onResumeInspection(inspection)}
                     className="w-full text-left p-4 lg:p-6"
@@ -625,34 +734,34 @@ export function InspectorHome({
                       </div>
                     </div>
 
-                    <div className="space-y-2 mb-4">
+<FadeIn className="space-y-2 mb-4" delay={60} transitionDuration={240}>
                       <div className="flex items-center gap-2 text-xs lg:text-sm text-orange-600">
                         <Clock className="w-4 h-4 flex-shrink-0" />
                         <span>Created: {formatDate(inspection.timestamp)}</span>
                       </div>
-                      <div className="text-xs lg:text-sm text-orange-700">
-                        Created by: <span className="font-medium">{inspection.inspectorName}</span>
-                      </div>
+                      <FadeInText visible={!!(inspection.inspectorName || (inspection as any).createdBy || pick(inspection.raw as any, 'createdBy', 'created_by', 'inspectorName'))} className="text-xs lg:text-sm text-orange-700 block">
+                        Created by: <span className="font-medium">{inspection.inspectorName || (inspection as any).createdBy || pick(inspection.raw as any, 'createdBy', 'created_by', 'inspectorName')}</span>
+                      </FadeInText>
 
                       {(() => {
                         const s = getSummary(inspection.id);
-                        if (s && s.lastUpdated) return (
+                        return (
                           <div className="flex items-center gap-2 text-xs lg:text-sm text-orange-600">
                             <Clock className="w-4 h-4 flex-shrink-0" />
-                            <span>Last updated: {formatDate(s.lastUpdated)}</span>
+                            <span>
+                              Last updated: <FadeInText visible={!!(s && s.lastUpdated)} className="inline-block">{(s && s.lastUpdated) ? formatDate(s.lastUpdated) : <span className="text-gray-400">—</span>}</FadeInText>
+                            </span>
                           </div>
                         );
-                        return null;
-                      })()}
+                      })()} 
 
                       {(() => {
                         const s = getSummary(inspection.id);
-                        if (s && s.lastUpdatedBy) return (
-                          <div className="text-xs lg:text-sm text-orange-700">
-                            Last updated by: <span className="font-medium">{s.lastUpdatedBy}</span>
+                        return (
+                          <div className="text-xs lg:text-sm text-orange-700 block">
+                            Last updated by: <FadeInText visible={!!(s && s.lastUpdatedBy)} className="inline-block"><span className="font-medium">{(s && s.lastUpdatedBy) ? s.lastUpdatedBy : <span className="text-gray-400">—</span>}</span></FadeInText>
                           </div>
                         );
-                        return null;
                       })()}
 
                       {/* Summary (pass/fail/pending). If no DB summary exists, compute expected pending from venue definition */}
@@ -675,20 +784,20 @@ export function InspectorHome({
                           <div className="flex gap-4 text-sm mt-2">
                             <div className="flex items-center gap-2">
                               <CheckCircle2 className="w-4 h-4 text-green-600" />
-                              <span className="text-gray-700">Pass: {totals.pass}</span>
+                              <span className="text-gray-700">Pass: <NumberFlow value={totals.pass ?? null} className="inline-block" /></span>
                             </div>
                             <div className="flex items-center gap-2">
                               <XCircle className="w-4 h-4 text-red-600" />
-                              <span className="text-gray-700">Fail: {totals.fail}</span>
+                              <span className="text-gray-700">Fail: <NumberFlow value={totals.fail ?? null} className="inline-block" /></span>
                             </div>
                             <div className="flex items-center gap-2">
                               <Clock className="w-4 h-4 text-yellow-500" />
-                              <span className="text-gray-700">Pending: {totals.pending}</span>
+                              <span className="text-gray-700">Pending: <NumberFlow value={totals.pending ?? null} className="inline-block" /></span>
                             </div>
                           </div>
                         );
                       })()}
-                    </div>
+                    </FadeIn>
 
                     <div className="pt-3 border-t border-orange-200">
                       <span className="text-orange-800 text-sm font-medium">
@@ -715,6 +824,7 @@ export function InspectorHome({
                     </button>
                   </div>
                 </div>
+                </FadeIn>
               ))}
             </div>
           )}
@@ -723,9 +833,14 @@ export function InspectorHome({
           <div className="p-4 lg:p-6">
             <div className="flex items-center justify-between mb-4 lg:mb-6">
               <h2 className="text-gray-700 text-lg lg:text-xl">Completed Inspections</h2>
-              <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm">
-                {completedInspections.length} completed
-              </span>
+              <div className="flex items-center gap-2">
+                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="border rounded px-2 py-1 text-sm text-gray-600" aria-label="Start date" />
+                <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="border rounded px-2 py-1 text-sm text-gray-600" aria-label="End date" />
+                <button onClick={() => { setStartDate(''); setEndDate(''); }} className="text-sm text-gray-600 hover:text-gray-900">Clear</button>
+                <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm">
+                  {filteredCompletedInspections.length} shown
+                </span>
+              </div>
             </div>
 
             {completedInspections.length === 0 ? (
@@ -734,19 +849,33 @@ export function InspectorHome({
               </div>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-6">
-                {displayedCompletedInspections.map((inspection) => (
+                {displayedCompletedInspections.map((inspection, idx) => (
+                  <FadeIn key={inspection.id} delay={80 + idx * 40} transitionDuration={300}>
                   <div
-                    key={inspection.id}
                     className="border-2 border-green-200 bg-green-50 rounded-lg overflow-hidden"
                   >
                     <div className="p-4 lg:p-6">
                       <div className="flex items-start justify-between mb-3">
                         <div className="flex-1 min-w-0">
-                          <h3 className="text-green-800 truncate">{inspection.venueName}</h3>
-                          <p className="text-green-700 text-sm truncate">{inspection.roomName}</p>
-                          {inspection.updatedAt && (
-                            <div className="text-xs text-green-600 mt-1">Completed: {formatDate(inspection.updatedAt as string)}</div>
-                          )}
+                          <h3 className="text-green-800 truncate">{formatDate(inspection.completedAt || inspection.updatedAt || inspection.timestamp)}</h3>
+                          <FadeIn className="mt-1" delay={60} transitionDuration={240}>
+                            <p className="text-green-700 text-sm truncate">{inspection.venueName}</p>
+                            {inspection.roomName && (
+                              <p className="text-green-700 text-sm truncate">{inspection.roomName}</p>
+                            )}
+
+                            {inspection.createdBy && (
+                              <div className="text-xs text-green-700 mt-1">Created by: <span className="font-medium">{inspection.createdBy}</span></div>
+                            )}
+
+                            {(() => {
+                              const s = getSummary(inspection.id);
+                              if (s && s.totals) return (
+                                <div className="text-xs text-gray-500 mt-2">Pass: {s.totals.pass || 0} • Fail: {s.totals.fail || 0} • NA: {s.totals.na || 0} • Total: {s.totals.total || 0}</div>
+                              );
+                              return null;
+                            })()}
+                          </FadeIn>
                         </div>
                       </div>
                     </div>
@@ -754,6 +883,7 @@ export function InspectorHome({
                       <button onClick={() => onViewHistory()} className="w-full py-2 px-3 bg-green-100 text-green-700 rounded text-sm">View in History</button>
                     </div>
                   </div>
+                </FadeIn>
                 ))}
               </div>
             )}

@@ -175,11 +175,10 @@ export function VenueList({
                           <Clock className="w-3.5 h-3.5 lg:w-4 lg:h-4 flex-shrink-0" />
                           <span className="truncate">Updated: <span className="text-gray-700">{formatDate(venue.updatedAt)}</span></span>
                         </div>
-                        {inspectionsCount && inspectionsCount[venue.id] > 0 && (
-                          <div className="flex items-center gap-2 text-xs text-gray-500">
-                            <span className="truncate">Inspections: <span className="text-gray-700">{inspectionsCount[venue.id]}</span></span>
-                          </div>
-                        )}
+                        {/* Always reserve space for inspections count so UI alignment remains stable even when count is 0 or unavailable */}
+                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                          <span className="truncate">Inspections: <span className="text-gray-700 inline-block min-w-[0.5rem] text-right">{(inspectionsCount && inspectionsCount[venue.id] !== undefined) ? inspectionsCount[venue.id] : 0}</span></span>
+                        </div>
                       </div>
 
 

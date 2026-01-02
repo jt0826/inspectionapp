@@ -1,7 +1,8 @@
 export async function getInspectionSummary(inspectionId: string) {
   if (!inspectionId) return null;
   // Primary summary endpoint (may not be supported by all deployments)
-  const API_BASE = 'https://9d812k40eb.execute-api.ap-southeast-1.amazonaws.com/dev';
+  // New consolidated inspections query endpoint
+  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-query';
   try {
     const res = await fetch(API_BASE, {
       method: 'POST',
@@ -88,7 +89,7 @@ function computeSummaryFromItems(items: any[]) {
 
 export async function checkInspectionComplete(inspectionId: string, venueId: string) {
   if (!inspectionId || !venueId) return null;
-  const API_BASE = 'https://9d812k40eb.execute-api.ap-southeast-1.amazonaws.com/dev';
+  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-query';
   try {
     const res = await fetch(API_BASE, {
       method: 'POST',
@@ -111,8 +112,8 @@ export async function checkInspectionComplete(inspectionId: string, venueId: str
 
 export async function deleteInspection(inspectionId: string, token?: string) {
   if (!inspectionId) return null;
-  // Use the lh3 endpoint which contains the inspections handler
-  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev';
+  // Use the consolidated inspections-delete endpoint
+  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-delete';
   try {
     console.log('[API] deleteInspection ->', API_BASE, inspectionId);
     const res = await fetch(API_BASE, {
@@ -135,6 +136,15 @@ export async function deleteInspection(inspectionId: string, token?: string) {
       return { ok: false, status: res.status, data };
     }
 
+    // Notify UI listeners that an inspection changed (deleted)
+    try {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('inspectionSaved', { detail: { inspectionId } }));
+      }
+    } catch (e) {
+      // ignore
+    }
+
     return { ok: true, status: res.status, data };
   } catch (e) {
     console.warn('deleteInspection failed', e);
@@ -143,7 +153,7 @@ export async function deleteInspection(inspectionId: string, token?: string) {
 }
 
 export async function getInspections() {
-  const API_BASE = 'https://9d812k40eb.execute-api.ap-southeast-1.amazonaws.com/dev';
+  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-query';
   try {
     const res = await fetch(API_BASE, {
       method: 'POST',
@@ -176,7 +186,8 @@ export async function getInspections() {
 
 export async function getInspectionItems(inspectionId: string) {
   if (!inspectionId) return null;
-  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev';
+  // Use consolidated inspections query endpoint to fetch inspection items
+  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-query';
   try {
     const res = await fetch(API_BASE, {
       method: 'POST',

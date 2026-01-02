@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { ArrowLeft, History, Building2, Calendar, CheckCircle2, XCircle, AlertCircle, Search, Trash2 } from 'lucide-react';
+import NumberFlow from '@number-flow/react';
+import FadeInText from './FadeInText';
+import FadeIn from 'react-fade-in';
 import { Inspection } from '../App';
 import { getInspections, getInspectionItems } from '../utils/inspectionApi';
 
@@ -14,14 +17,17 @@ import { checkInspectionComplete } from '../utils/inspectionApi';
 
 export function InspectionHistory({ inspections, onBack, onDeleteInspection }: InspectionHistoryProps) {
   const [searchTerm, setSearchTerm] = useState('');
+  // Fade-in animations
   const [filterType, setFilterType] = useState<'all' | 'passed' | 'failed'>('all');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
   const { show, confirm } = useToast();
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', {
-      month: 'short',
-      day: 'numeric',
+    return date.toLocaleString('en-GB', {
+      day: '2-digit',
+      month: '2-digit',
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
@@ -153,25 +159,42 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection }: I
     if (!matchesSearch) return false;
 
     // Type filter
-    if (filterType === 'all') return true;
-    const rawItems = (inspection.items || []) as any[];
-    const items = rawItems.filter((it) => it && (it.itemId || it.id || it.item || it.ItemId));
-    const failedItems = items.filter((i: any) => String(i?.status || '').toLowerCase() === 'fail').length;
-    if (filterType === 'failed') return failedItems > 0;
-    if (filterType === 'passed') return failedItems === 0;
+    if (filterType === 'all') {
+      // proceed
+    } else {
+      const rawItems = (inspection.items || []) as any[];
+      const items = rawItems.filter((it) => it && (it.itemId || it.id || it.item || it.ItemId));
+      const failedItems = items.filter((i: any) => String(i?.status || '').toLowerCase() === 'fail').length;
+      if (filterType === 'failed' && !(failedItems > 0)) return false;
+      if (filterType === 'passed' && !(failedItems === 0)) return false;
+    }
+
+    // Date range filter (client-side) - use completedAt if available, otherwise updatedAt/timestamp
+    const rawDate = inspection.completedAt || inspection.completed_at || inspection.updatedAt || inspection.updated_at || inspection.timestamp || inspection.createdAt || inspection.created_at;
+    if (rawDate) {
+      const d = new Date(String(rawDate));
+      if (startDate) {
+        const s = new Date(startDate + 'T00:00:00');
+        if (d < s) return false;
+      }
+      if (endDate) {
+        const e = new Date(endDate + 'T23:59:59');
+        if (d > e) return false;
+      }
+    }
 
     return true;
   });
 
   // Sort by most recent first (defensive timestamp handling)
   const sortedInspections = [...filteredInspections].sort((a: any, b: any) => {
-    const aTs = String(a.timestamp || a.created_at || a.createdAt || a.updatedAt || a.updated_at || '');
-    const bTs = String(b.timestamp || b.created_at || b.createdAt || b.updatedAt || b.updated_at || '');
+    const aTs = String(a.completedAt || a.completed_at || a.timestamp || a.created_at || a.createdAt || a.updatedAt || a.updated_at || '');
+    const bTs = String(b.completedAt || b.completed_at || b.timestamp || b.created_at || b.createdAt || b.updatedAt || b.updated_at || '');
     return new Date(bTs).getTime() - new Date(aTs).getTime();
   });
 
   // Render list using normalized field access
-  const renderInspectionItem = (inspection: any) => {
+  const renderInspectionItem = (inspection: any, idx: number) => {
     const id = String(inspection.id || inspection.inspection_id || '');
     const rawItems = (inspection.items || []) as any[];
     const items = rawItems.filter((it) => it && (it.itemId || it.id || it.item || it.ItemId));
@@ -188,7 +211,6 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection }: I
 
     return (
       <div
-        key={id}
         className={`border-2 rounded-lg ${hasIssues ? 'border-red-200 bg-red-50' : 'border-green-200 bg-green-50'}`}
       >
         <div className="p-4 lg:p-6">
@@ -201,47 +223,39 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection }: I
                   <CheckCircle2 className="w-5 h-5 lg:w-6 lg:h-6 text-green-600 flex-shrink-0" />
                 )}
                 <h3 className={`text-base lg:text-lg truncate ${hasIssues ? 'text-red-900' : 'text-green-900'}`}>
-                  {venueName}
+                  {formatDate(inspection.completedAt || inspection.updatedAt || inspection.timestamp)}
                 </h3>
               </div>
-              <div className="flex items-center gap-2 text-sm lg:text-base mb-2">
-                <Building2 className={`w-4 h-4 flex-shrink-0 ${hasIssues ? 'text-red-700' : 'text-green-700'}`} />
-                <span className={hasIssues ? 'text-red-700' : 'text-green-700'}>
-                  {roomName}
-                </span>
+              <div>
+                <p className={`text-sm ${hasIssues ? 'text-red-700' : 'text-green-700'} truncate`}>{venueName}</p>
+                {roomName && (
+                  <div className={`flex items-center gap-2 text-sm ${hasIssues ? 'text-red-700' : 'text-green-700'}`}>
+                    <Building2 className="w-4 h-4 flex-shrink-0" />
+                    <span>{roomName}</span>
+                  </div>
+                )}
               </div>
             </div>
           </div>
 
-          {/* Stats */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-            <div className="bg-white rounded-lg p-3 border border-gray-200">
-              <div className="text-xs text-gray-600 mb-1">Total Items</div>
-              <div className="text-lg lg:text-xl text-gray-900">{totalItems}</div>
-            </div>
-            <div className="bg-white rounded-lg p-3 border border-green-200">
-              <div className="text-xs text-green-600 mb-1">Passed</div>
-              <div className="text-lg lg:text-xl text-green-700">{passedItems}</div>
-            </div>
-            <div className="bg-white rounded-lg p-3 border border-red-200">
-              <div className="text-xs text-red-600 mb-1">Failed</div>
-              <div className="text-lg lg:text-xl text-red-700">{failedItems}</div>
-            </div>
-            <div className="bg-white rounded-lg p-3 border border-gray-200">
-              <div className="text-xs text-gray-600 mb-1">N/A</div>
-              <div className="text-lg lg:text-xl text-gray-700">{naItems}</div>
-            </div>
-          </div>
+          {/* Subtle totals */}
+          <FadeIn delay={110 + idx * 30} transitionDuration={220}>
+            <div className="text-xs text-gray-500 mb-2">Pass: <NumberFlow value={passedItems ?? null} /> • Fail: <NumberFlow value={failedItems ?? null} /> • NA: <NumberFlow value={naItems ?? null} /> • Total: <NumberFlow value={totalItems ?? null} /></div>
+          </FadeIn>
 
           {/* Metadata */}
           <div className="space-y-2 text-xs lg:text-sm">
-            <div className={`flex items-center gap-2 ${hasIssues ? 'text-red-600' : 'text-green-600'}`}>
-              <Calendar className="w-4 h-4 flex-shrink-0" />
-              <span>{formatDate(timestamp)}</span>
-            </div>
-            <div className={`${hasIssues ? 'text-red-700' : 'text-green-700'}`}>
-              Inspector: <span className="font-medium">{inspectorName}</span>
-            </div>
+            <FadeIn delay={140 + idx * 30} transitionDuration={220}>
+              <div className={`flex items-center gap-2 ${hasIssues ? 'text-red-600' : 'text-green-600'}`}>
+                <Calendar className="w-4 h-4 flex-shrink-0" />
+                <span>{formatDate(inspection.completedAt || inspection.updatedAt || inspection.timestamp || timestamp)}</span>
+              </div>
+            </FadeIn>
+            <FadeIn delay={170 + idx * 30} transitionDuration={220}>
+              <div className={`${hasIssues ? 'text-red-700' : 'text-green-700'}`}>
+                Created by: <span className="font-medium">{inspectorName || (inspection.createdBy || inspection.created_by)}</span>
+              </div>
+            </FadeIn>
           </div>
 
           {/* Failed Items Details */}
@@ -251,11 +265,13 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection }: I
               <div className="space-y-1">
                 {items
                   .filter((item) => String(item?.status || '').toLowerCase() === 'fail')
-                  .map((item, idx) => (
-                    <div key={idx} className="text-xs lg:text-sm text-red-700 flex items-start gap-2">
-                      <XCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                      <span>{String(item?.item || item?.name || '')}</span>
-                    </div>
+                  .map((item, itemIdx) => (
+                    <FadeIn key={itemIdx} delay={200 + idx * 30 + itemIdx * 40} transitionDuration={220}>
+                      <div className="text-xs lg:text-sm text-red-700 flex items-start gap-2">
+                        <XCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                        <span>{String(item?.item || item?.name || '')}</span>
+                      </div>
+                    </FadeIn>
                   ))}
               </div>
             </div>
@@ -285,7 +301,7 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection }: I
             <div>
               <h1 className="text-xl lg:text-3xl">Inspection History</h1>
               <p className="text-blue-100 text-sm lg:text-base">
-                {completedInspections.length} completed inspection{completedInspections.length !== 1 ? 's' : ''} (total {sourceInspections.length})
+                Showing {filteredInspections.length} of {completedInspections.length} completed inspection{completedInspections.length !== 1 ? 's' : ''} (total {sourceInspections.length})
                 {checkingComplete && (
                   <span className="ml-3 px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">Checking completion…</span>
                 )}
@@ -344,6 +360,16 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection }: I
                 Issues
               </button>
             </div>
+
+            {/* Date range filter (client-side) */}
+            <div className="flex items-center gap-2">
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="border rounded px-2 py-1 text-sm text-gray-600" aria-label="Start date" />
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="border rounded px-2 py-1 text-sm text-gray-600" aria-label="End date" />
+              <button onClick={() => { setStartDate(''); setEndDate(''); }} className="text-sm text-gray-600 hover:text-gray-900">Clear</button>
+              <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm">
+                {filteredInspections ? filteredInspections.length : '—'} shown
+              </span>
+            </div> 
           </div>
         </div>
 
@@ -358,7 +384,11 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection }: I
             </div>
           ) : (
             <div className="space-y-4 lg:space-y-6">
-              {sortedInspections.map((inspection) => renderInspectionItem(inspection))}
+              {sortedInspections.map((inspection, idx) => (
+                <FadeIn key={String(inspection.inspection_id || inspection.id || idx)} delay={80 + idx * 40} transitionDuration={300}>
+                  {renderInspectionItem(inspection, idx)}
+                </FadeIn>
+              ))}
             </div>
           )}
         </div>

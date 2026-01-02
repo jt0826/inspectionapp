@@ -1,6 +1,20 @@
 import json
 import boto3
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _parse_iso_to_aware(val):
+    """Parse an ISO date string and return a timezone-aware datetime.
+    If input is naive, assume UTC."""
+    if not val:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(val))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except Exception:
+        return None
 import traceback
 
 # CORS/header configuration
@@ -23,6 +37,10 @@ def _try_parse_date(val):
     if isinstance(val, str):
         try:
             dt = datetime.fromisoformat(val)
+            # If the stored datetime is naive, assume it was UTC and mark it as such so
+            # the frontend receives an ISO string with explicit timezone information.
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
             return dt.isoformat()
         except Exception:
             return val
@@ -46,13 +64,13 @@ def lambda_handler(event, context):
 
         # LIST_INSPECTIONS: return inspection metadata from InspectionData
         if not action or action == 'list_inspections':
-            # Scan the table with pagination
+            # Scan the table with pagination (use strongly-consistent reads so list reflects recent writes)
             items = []
             try:
-                resp = table.scan()
+                resp = table.scan(ConsistentRead=True)
                 items.extend(resp.get('Items', []) or [])
                 while 'LastEvaluatedKey' in resp:
-                    resp = table.scan(ExclusiveStartKey=resp['LastEvaluatedKey'])
+                    resp = table.scan(ExclusiveStartKey=resp['LastEvaluatedKey'], ConsistentRead=True)
                     items.extend(resp.get('Items', []) or [])
             except Exception as e:
                 print('Failed to scan InspectionData:', e)
@@ -74,16 +92,22 @@ def lambda_handler(event, context):
                     'createdAt': created,
                     'venueId': it.get('venueId') or it.get('venue_id') or None,
                     'venueName': it.get('venueName') or it.get('venue_name') or None,
+                    'venue_name': it.get('venue_name') or it.get('venueName') or None,
                     'roomId': it.get('roomId') or it.get('room_id') or None,
                     'roomName': it.get('roomName') or it.get('room_name') or None,
+                    'completedAt': _try_parse_date(it.get('completedAt') or it.get('completed_at') or None),
                     'status': (it.get('status') or '').lower() if it.get('status') else None,
                     'raw': it
                 }
 
+                # include creator and inspector display names if present on the item
+                obj['createdBy'] = it.get('createdBy') or it.get('created_by') or it.get('inspectorName') or None
+                obj['inspectorName'] = it.get('inspectorName') or it.get('createdBy') or it.get('created_by') or None
+
                 if updated:
                     obj['updatedAt'] = updated
-                if inspector:
-                    obj['inspectorName'] = inspector
+                # prefer explicit updatedBy field if present, otherwise fall back to inspectorName
+                obj['updatedBy'] = it.get('updatedBy') or inspector or None
 
                 inspections.append(obj)
 
@@ -111,8 +135,18 @@ def lambda_handler(event, context):
                 pk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'HASH'), 'inspection_id')
 
                 from boto3.dynamodb.conditions import Key
-                resp = insp_table.query(KeyConditionExpression=Key(pk_attr).eq(inspection_id))
+                # Use a strongly-consistent read so recent writes are visible immediately
+                resp = insp_table.query(KeyConditionExpression=Key(pk_attr).eq(inspection_id), ConsistentRead=True)
                 items = resp.get('Items', [])
+
+                # Normalize date fields to timezone-aware ISO strings so clients render consistent local times
+                for it in items:
+                    for k in ('createdAt', 'created_at', 'updatedAt', 'updated_at', 'completedAt', 'completed_at'):
+                        if it.get(k):
+                            dt = _parse_iso_to_aware(it.get(k))
+                            if dt:
+                                it[k] = dt.isoformat()
+
                 return {
                     'statusCode': 200,
                     'headers': CORS_HEADERS,
@@ -145,7 +179,8 @@ def lambda_handler(event, context):
                 pk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'HASH'), 'inspection_id')
 
                 from boto3.dynamodb.conditions import Key
-                resp = insp_table.query(KeyConditionExpression=Key(pk_attr).eq(inspection_id))
+                # Use a strongly-consistent read so recent writes are visible immediately
+                resp = insp_table.query(KeyConditionExpression=Key(pk_attr).eq(inspection_id), ConsistentRead=True)
                 items = resp.get('Items', [])
 
                 totals = {'pass': 0, 'fail': 0, 'na': 0, 'pending': 0, 'total': 0}
@@ -186,13 +221,18 @@ def lambda_handler(event, context):
 
                     ts_raw = it.get('updatedAt') or it.get('updated_at') or it.get('createdAt') or it.get('created_at')
                     if ts_raw:
-                        try:
-                            ts = datetime.fromisoformat(str(ts_raw)).isoformat()
-                        except Exception:
-                            ts = str(ts_raw)
-                        if not latest_ts or datetime.fromisoformat(ts) > datetime.fromisoformat(latest_ts):
-                            latest_ts = ts
-                            latest_by = it.get('inspectorName') or it.get('createdBy') or it.get('inspector_name') or it.get('created_by') or None
+                        dt = _parse_iso_to_aware(ts_raw)
+                        if dt:
+                            # Normalize to ISO with offset for consistency
+                            ts = dt.isoformat()
+                            if not latest_ts:
+                                latest_ts = ts
+                                latest_by = it.get('inspectorName') or it.get('createdBy') or it.get('inspector_name') or it.get('created_by') or None
+                            else:
+                                ldt = _parse_iso_to_aware(latest_ts)
+                                if ldt is None or dt > ldt:
+                                    latest_ts = ts
+                                    latest_by = it.get('inspectorName') or it.get('createdBy') or it.get('inspector_name') or it.get('created_by') or None
 
                 return {
                     'statusCode': 200,
@@ -247,7 +287,8 @@ def lambda_handler(event, context):
                 pk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'HASH'), 'inspection_id')
 
                 from boto3.dynamodb.conditions import Key
-                resp = insp_table.query(KeyConditionExpression=Key(pk_attr).eq(inspection_id))
+                # Use a strongly-consistent read so recent writes are visible immediately
+                resp = insp_table.query(KeyConditionExpression=Key(pk_attr).eq(inspection_id), ConsistentRead=True)
                 items = resp.get('Items', [])
                 present = set()
                 for it in items:

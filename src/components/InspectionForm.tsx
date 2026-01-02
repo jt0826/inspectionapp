@@ -15,21 +15,21 @@ interface InspectionFormProps {
 }
 
 const defaultInspectionItems: Omit<InspectionItem, 'status' | 'notes' | 'photos'>[] = [
-  { id: '1', category: 'Safety', item: 'Fire extinguisher present and accessible' },
-  { id: '2', category: 'Safety', item: 'Emergency exit signs illuminated' },
-  { id: '3', category: 'Safety', item: 'Exit paths clear and unobstructed' },
-  { id: '4', category: 'Safety', item: 'First aid kit available' },
-  { id: '5', category: 'Cleanliness', item: 'Floors clean and free of debris' },
-  { id: '6', category: 'Cleanliness', item: 'Walls and surfaces clean' },
-  { id: '7', category: 'Cleanliness', item: 'No signs of pests or infestation' },
-  { id: '8', category: 'Maintenance', item: 'Lighting functional' },
-  { id: '9', category: 'Maintenance', item: 'HVAC system operational' },
-  { id: '10', category: 'Maintenance', item: 'Doors and locks functioning properly' },
-  { id: '11', category: 'Maintenance', item: 'Windows intact and clean' },
-  { id: '12', category: 'Equipment', item: 'Furniture in good condition' },
-  { id: '13', category: 'Equipment', item: 'Electrical outlets functional' },
-  { id: '14', category: 'Compliance', item: 'ADA accessibility requirements met' },
-  { id: '15', category: 'Compliance', item: 'Required signage posted' },
+  { id: '1', item: 'Fire extinguisher present and accessible' },
+  { id: '2', item: 'Emergency exit signs illuminated' },
+  { id: '3', item: 'Exit paths clear and unobstructed' },
+  { id: '4', item: 'First aid kit available' },
+  { id: '5', item: 'Floors clean and free of debris' },
+  { id: '6', item: 'Walls and surfaces clean' },
+  { id: '7', item: 'No signs of pests or infestation' },
+  { id: '8', item: 'Lighting functional' },
+  { id: '9', item: 'HVAC system operational' },
+  { id: '10', item: 'Doors and locks functioning properly' },
+  { id: '11', item: 'Windows intact and clean' },
+  { id: '12', item: 'Furniture in good condition' },
+  { id: '13', item: 'Electrical outlets functional' },
+  { id: '14', item: 'ADA accessibility requirements met' },
+  { id: '15', item: 'Required signage posted' },
 ];
 
 export function InspectionForm({ venue, room, onBack, onSubmit, existingInspection, inspectionId }: InspectionFormProps) {
@@ -45,7 +45,6 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
     if (room && Array.isArray((room as any).items) && (room as any).items.length > 0) {
       return (room as any).items.map((it: any) => ({
         id: it.itemId || it.id || ('item_' + Math.random().toString(36).substr(2, 9)),
-        category: it.category || 'General',
         item: it.name || it.item || '',
         status: 'pending' as const,
         photos: [],
@@ -81,7 +80,6 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
   useEffect(() => {
     const mapDbItem = (it: any): InspectionItem => ({
       id: it.itemId || it.item || it.ItemId || ('item_' + Math.random().toString(36).substr(2,9)),
-      category: it.category || 'General',
       item: it.itemName || it.item || it.ItemName || it.name || '',
       // Normalize status from backend to lower-case and default to 'pending'
       status: (it.status || 'pending').toString().toLowerCase(),
@@ -102,8 +100,10 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
         let items = await getInspectionItems(inspectionId);
         if (!items) return;
         items = (items as any[]).filter((it) => String(it.roomId || it.room_id || it.room || '') === String(room.id));
+        // Filter out meta rows / non-item rows that lack an identifier
+        items = items.filter((it: any) => (it.itemId || it.item || it.ItemId || it.id));
         if (items && items.length > 0) {
-          const mapped = items.map(mapDbItem);
+          const mapped = items.map((it: any) => mapDbItem(it));
           setInspectionItems(mapped);
         }
       } catch (e) {
@@ -131,7 +131,8 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
     // send to backend (no photos)
     try {
       setSaving(true);
-      const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev'; // single endpoint placeholder
+      // Use the consolidated inspections mutation endpoint
+      const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections'; // single endpoint placeholder for saves
 
       const payload = {
         action: 'save_inspection',
@@ -163,10 +164,9 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
         console.log('save_inspection response', data);
         // do not navigate away on Save; show brief confirmation instead (global toast)
         show('Saved', { variant: 'success' });
-        // If backend reports it's fully complete (all PASS), notify listeners so the home view can refresh
+        // Notify listeners so the home view can refresh counts/summary on any successful save
         try {
-          const isComplete = data && (data === true || data.complete === true || (typeof data.complete === 'object' && data.complete && data.complete.complete === true));
-          if (isComplete) {
+          if (typeof window !== 'undefined') {
             window.dispatchEvent(new CustomEvent('inspectionSaved', { detail: { inspectionId: inspectionToSubmit.id } }));
           }
         } catch (e) {
@@ -185,7 +185,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
   const passCount = inspectionItems.filter((item) => item.status === 'pass').length;
   const failCount = inspectionItems.filter((item) => item.status === 'fail').length;
 
-  const categories = Array.from(new Set(inspectionItems.map((item) => item.category)));
+  // Items no longer have categories; render a flat list
 
   const handlePhotoUpload = (id: string, file: File) => {
     const reader = new FileReader();
@@ -250,14 +250,8 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
 
         {/* Inspection Items */}
         <div className="p-4">
-          {categories.map((category) => (
-            <div key={category} className="mb-6">
-              <h2 className="text-gray-700 uppercase tracking-wide text-sm mb-3">{category}</h2>
-              <div className="space-y-4">
-                {inspectionItems
-                  .filter((item) => item.category === category)
-                  .map((item) => (
-                    <div key={item.id} className="border border-gray-200 rounded-lg p-4">
+          {inspectionItems.map((item) => (
+                    <div key={item.id} className="border border-gray-200 rounded-lg p-4 mb-4">
                       <p className="text-gray-900 mb-3">{item.item}</p>
 
                       {/* Status Buttons */}
@@ -356,9 +350,6 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                       </div>
                     </div>
                   ))}
-              </div>
-            </div>
-          ))}
         </div>
 
         {/* Fixed Bottom Button */}
