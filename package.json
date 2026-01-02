@@ -6,6 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
+    "deploy": "npm run build && aws s3 sync ./out s3://testapp2608 --delete",
     "lint": "eslint"
   },
   "dependencies": {
@@ -25,5 +26,6 @@
     "eslint-config-next": "16.1.1",
     "tailwindcss": "^4",
     "typescript": "^5"
-  }
+  },
+  
 }
