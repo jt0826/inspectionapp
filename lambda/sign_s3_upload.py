@@ -12,11 +12,11 @@ MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    'Access-Control-Allow-Methods': 'OPTIONS,POST',
-    'Content-Type': 'application/json'
+    'Access-Control-Allow-Methods': 'OPTIONS,POST,PUT',
+    'Content-Type': 'application/json, image/png'
 }
 
-s3 = boto3.client('s3', region_name=REGION, aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'], aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'])
+s3 = boto3.client('s3')
 
 
 def build_response(status_code, body):

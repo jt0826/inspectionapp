@@ -68,11 +68,9 @@ def lambda_handler(event, context):
         table = dynamodb.Table(TABLE_NAME)
         image_id = str(uuid.uuid4())
         item = {
-            'imageId': image_id,
-            'inspectionId': inspection_id,
-            'venueId': venue_id,
-            'roomId': room_id,
-            'itemId': item_id,
+            'inspection_id': inspection_id,
+            'room_id#item_id#image_id': "#".join([room_id, item_id, image_id]),
+            'venue_id': venue_id,
             's3Key': key,
             'filename': filename,
             'contentType': s3_content_type or content_type,
