@@ -833,13 +833,27 @@ export function InspectorHome({
           <div className="p-4 lg:p-6">
             <div className="flex items-center justify-between mb-4 lg:mb-6">
               <h2 className="text-gray-700 text-lg lg:text-xl">Completed Inspections</h2>
-              <div className="flex items-center gap-2">
-                <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="border rounded px-2 py-1 text-sm text-gray-600" aria-label="Start date" />
-                <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="border rounded px-2 py-1 text-sm text-gray-600" aria-label="End date" />
-                <button onClick={() => { setStartDate(''); setEndDate(''); }} className="text-sm text-gray-600 hover:text-gray-900">Clear</button>
-                <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm">
-                  {filteredCompletedInspections.length} shown
-                </span>
+              <div className="flex items-center gap-2 flex-wrap w-full">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 w-full">
+                  <label className="flex flex-col text-xs text-gray-600 w-full sm:w-auto">
+                    <span className="text-xs font-medium">Start</span>
+                    <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="border rounded px-2 py-1 text-sm text-gray-600 w-full sm:w-36" aria-label="Start date" />
+                  </label>
+
+                  <label className="flex flex-col text-xs text-gray-600 w-full sm:w-auto">
+                    <span className="text-xs font-medium">End</span>
+                    <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="border rounded px-2 py-1 text-sm text-gray-600 w-full sm:w-36" aria-label="End date" />
+                  </label>
+
+                  <div className="w-full lg:hidden mt-1 text-xs text-gray-500">Tap to select the date range</div>
+                </div>
+
+                <div className="flex items-center gap-2 mt-2 sm:mt-0 sm:ml-auto">
+                  <button onClick={() => { setStartDate(''); setEndDate(''); }} className="text-sm text-gray-600 hover:text-gray-900">Clear</button>
+                  <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm">
+                    {filteredCompletedInspections.length} shown
+                  </span>
+                </div>
               </div>
             </div>
 
