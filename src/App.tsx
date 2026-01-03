@@ -5,7 +5,6 @@ import { Login } from './components/Login';
 import { VenueList } from './components/VenueList';
 import { RoomList } from './components/RoomList';
 import { InspectionForm } from './components/InspectionForm';
-import { InspectionSummary } from './components/InspectionSummary';
 import { InspectionHistory } from './components/InspectionHistory';
 import { VenueForm } from './components/VenueForm';
 import { UserProfile } from './components/UserProfile';
@@ -31,12 +30,26 @@ export interface Room {
   items?: { id: string; name: string }[];
 }
 
+export interface Photo {
+  id: string;
+  imageId?: string | null;
+  s3Key?: string;
+  preview?: string;
+  previewUrl?: string;
+  filename?: string;
+  contentType?: string;
+  filesize?: number;
+  uploadedAt?: string;
+  uploadedBy?: string;
+  status?: 'pending' | 'uploading' | 'uploaded' | string;
+}
+
 export interface InspectionItem {
   id: string;
   item: string;
   status: 'pass' | 'fail' | 'na' | 'pending' | null;
   notes: string;
-  photos: string[];
+  photos: (string | Photo)[];
 }
 
 export interface Inspection {

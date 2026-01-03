@@ -130,7 +130,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                   const existing = it.photos || [];
                   const imgsForItem = images.filter((img) => String(img.itemId) === String(it.id));
                   const newPhotos = imgsForItem.map((img) => ({
-                    id: 's3_' + (img.s3Key || img.publicUrl).replace(/[^a-zA-Z0-9_-]/g, '_'),
+                    id: 's3_' + ((img.s3Key || img.publicUrl || img.filename) || '').replace(/[^a-zA-Z0-9_-]/g, '_'),
                     imageId: img.imageId || null,
                     s3Key: img.s3Key,
                     preview: img.publicUrl, // public S3 URL
@@ -364,7 +364,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
       const data = await resp.json();
       const images: any[] = data.images || [];
       const mapped = images.map((img) => ({
-        id: 's3_' + (img.s3Key || img.publicUrl).replace(/[^a-zA-Z0-9_-]/g, '_'),
+        id: 's3_' + ((img.s3Key || img.publicUrl || img.filename) || '').replace(/[^a-zA-Z0-9_-]/g, '_'),
         imageId: img.imageId,
         s3Key: img.s3Key,
         preview: img.publicUrl,
@@ -387,7 +387,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
     const toRemove = currentPhotos[index];
 
     // If this photo has been uploaded (persisted), perform delete flow: delete from S3 then remove DB metadata
-    if (toRemove && (toRemove.s3Key || toRemove.imageId)) {
+    if (toRemove && typeof toRemove !== 'string' && (toRemove.s3Key || toRemove.imageId)) {
       // Do not remove locally until server confirms — show modal confirm first
       const confirmed = await confirm({ title: 'Delete image', message: 'Delete this image? This will remove it permanently.', confirmLabel: 'Delete', cancelLabel: 'Cancel' });
       if (!confirmed) return;
@@ -426,7 +426,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
     }
 
     // Local-only photo (not uploaded) — just remove and revoke preview
-    if (toRemove && toRemove.preview && typeof toRemove.preview === 'string' && toRemove.preview.startsWith('blob:')) {
+    if (toRemove && typeof toRemove !== 'string' && toRemove.preview && typeof toRemove.preview === 'string' && toRemove.preview.startsWith('blob:')) {
       try { URL.revokeObjectURL(toRemove.preview); } catch (e) { /* ignore */ }
     }
 
