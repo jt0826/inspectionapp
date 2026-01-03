@@ -76,7 +76,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
   };
 
   const [saving, setSaving] = useState(false);
-  const { show } = useToast();
+  const { show, confirm } = useToast();
 
   // Load saved items when resuming an inspection or when an existingInspection prop is provided
   useEffect(() => {
@@ -107,6 +107,51 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
         if (items && items.length > 0) {
           const mapped = items.map((it: any) => mapDbItem(it));
           setInspectionItems(mapped);
+
+          // Also fetch registered images metadata for this inspection + room from the DB
+          (async () => {
+            try {
+              const resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/list-images-db', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ inspectionId: inspectionId, roomId: room.id })
+              });
+              if (!resp.ok) {
+                console.warn('Failed to fetch images from DB:', resp.status);
+                return;
+              }
+              const data = await resp.json();
+              const images: any[] = data.images || [];
+              if (images.length === 0) return;
+
+              // Merge images into corresponding items by itemId
+              setInspectionItems((prev) => {
+                return prev.map((it) => {
+                  const existing = it.photos || [];
+                  const imgsForItem = images.filter((img) => String(img.itemId) === String(it.id));
+                  const newPhotos = imgsForItem.map((img) => ({
+                    id: 's3_' + (img.s3Key || img.publicUrl).replace(/[^a-zA-Z0-9_-]/g, '_'),
+                    imageId: img.imageId || null,
+                    s3Key: img.s3Key,
+                    preview: img.publicUrl, // public S3 URL
+                    filename: img.filename,
+                    contentType: img.contentType,
+                    filesize: img.filesize,
+                    uploadedAt: img.uploadedAt,
+                    uploadedBy: img.uploadedBy,
+                    status: 'uploaded'
+                  }));
+
+                  const existingKeys = new Set(existing.map((p: any) => p.s3Key || p.preview || p.filename));
+                  const deduped = newPhotos.filter((p) => !existingKeys.has(p.s3Key || p.preview || p.filename));
+
+                  return { ...it, photos: [...existing, ...deduped] };
+                });
+              });
+            } catch (e) {
+              console.warn('Error fetching images from DB:', e);
+            }
+          })();
         }
       } catch (e) {
         console.warn('Failed to load saved inspection items:', e);
@@ -186,7 +231,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                 imageId: reg.imageId || reg.item?.imageId || null,
                 s3Key: reg.item?.s3Key || key,
                 preview: reg.previewUrl || null,
-                filename: makePhotoId,
+                filename: p.filename,
                 contentType: p.contentType,
                 filesize: p.filesize,
                 uploadedAt: new Date().toISOString(),
@@ -305,12 +350,86 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
     updateItem(id, { photos: [...currentPhotos, photoObj] });
   };
 
-  const removePhoto = (id: string, index: number) => {
+  const fetchItemImages = async (itemId: string) => {
+    try {
+      const resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/list-images-db', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ inspectionId: inspectionId, roomId: room.id, itemId })
+      });
+      if (!resp.ok) {
+        console.warn('Failed to fetch images for item:', resp.status);
+        return;
+      }
+      const data = await resp.json();
+      const images: any[] = data.images || [];
+      const mapped = images.map((img) => ({
+        id: 's3_' + (img.s3Key || img.publicUrl).replace(/[^a-zA-Z0-9_-]/g, '_'),
+        imageId: img.imageId,
+        s3Key: img.s3Key,
+        preview: img.publicUrl,
+        filename: img.filename,
+        contentType: img.contentType,
+        filesize: img.filesize,
+        uploadedAt: img.uploadedAt,
+        uploadedBy: img.uploadedBy,
+        status: 'uploaded'
+      }));
+
+      setInspectionItems((prev) => prev.map((it) => it.id === itemId ? { ...it, photos: [ ...(it.photos || []).filter((p: any) => p.file), ...mapped ] } : it ));
+    } catch (e) {
+      console.warn('Error fetching images for item:', e);
+    }
+  };
+
+  const removePhoto = async (id: string, index: number) => {
     const currentPhotos = inspectionItems.find(i => i.id === id)?.photos || [];
     const toRemove = currentPhotos[index];
+
+    // If this photo has been uploaded (persisted), perform delete flow: delete from S3 then remove DB metadata
+    if (toRemove && (toRemove.s3Key || toRemove.imageId)) {
+      // Do not remove locally until server confirms — show modal confirm first
+      const confirmed = await confirm({ title: 'Delete image', message: 'Delete this image? This will remove it permanently.', confirmLabel: 'Delete', cancelLabel: 'Cancel' });
+      if (!confirmed) return;
+
+      const effectiveInspectionId = inspectionId || existingInspection?.id;
+      if (!effectiveInspectionId) {
+        alert('Cannot delete image: missing inspection id');
+        return;
+      }
+
+      try {
+        // Prefer calling delete-by-db-entry which will find the s3Key then delete the object
+        const deleteS3Resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/delete-s3-by-db-entry', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ inspectionId: effectiveInspectionId, roomId: room.id, itemId: id, imageId: toRemove.imageId, s3Key: toRemove.s3Key })
+        });
+        if (!deleteS3Resp.ok) throw new Error('Failed to delete object from S3');
+
+        // Now delete the metadata record
+        const delDbResp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/delete-image-db', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ inspectionId: effectiveInspectionId, roomId: room.id, itemId: id, imageId: toRemove.imageId, s3Key: toRemove.s3Key })
+        });
+        if (!delDbResp.ok) throw new Error('Failed to delete image metadata');
+
+        // On success, refresh images for this item from DB and keep any pending local photos
+        await fetchItemImages(id);
+        show('Image deleted', { variant: 'success' });
+      } catch (e) {
+        console.error('Failed to delete image:', e);
+        alert('Failed to delete image. See console.');
+      }
+      return;
+    }
+
+    // Local-only photo (not uploaded) — just remove and revoke preview
     if (toRemove && toRemove.preview && typeof toRemove.preview === 'string' && toRemove.preview.startsWith('blob:')) {
       try { URL.revokeObjectURL(toRemove.preview); } catch (e) { /* ignore */ }
     }
+
     updateItem(id, { photos: currentPhotos.filter((_, i) => i !== index) });
   };
 
@@ -451,7 +570,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                                     type="button"
                                     aria-label="Remove photo"
                                     onClick={() => removePhoto(item.id, photoIndex)}
-                                    className="absolute top-2 right-2 bg-red-600 text-white rounded-full p-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    className="absolute top-2 right-2 bg-red-600 text-white rounded-full p-2 shadow-md focus:outline-none touch-manipulation"
                                   >
                                     <X className="w-3 h-3" />
                                   </button>

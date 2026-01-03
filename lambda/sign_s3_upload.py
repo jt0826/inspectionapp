@@ -2,7 +2,7 @@ import json
 import os
 import uuid
 import boto3
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 # Configuration
 BUCKET_NAME = 'testapp2608'  # placeholder specified
@@ -57,7 +57,7 @@ def lambda_handler(event, context):
             return build_response(400, {'message': 'File too large', 'maxBytes': MAX_FILE_SIZE})
 
         # Build key using ISO timestamp + uuid suffix
-        ts = datetime.utcnow().isoformat().replace(':', '-').replace('.', '-')
+        ts = datetime.now(timezone(timedelta(hours=8))).isoformat().replace(':', '-').replace('.', '-')
         suffix = uuid.uuid4().hex[:8]
         # preserve extension if present
         ext = ''

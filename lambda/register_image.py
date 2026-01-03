@@ -74,7 +74,7 @@ def lambda_handler(event, context):
             's3Key': key,
             'filename': filename,
             'contentType': s3_content_type or content_type,
-            'filesize': s3_size,
+            'filesize': int(s3_size),
             'uploadedBy': uploaded_by,
             'uploadedAt': uploaded_at
         }
