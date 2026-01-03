@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import FadeIn from 'react-fade-in';
 import { ArrowLeft, Building2, MapPin, Plus, Edit2, Trash2, User, LogOut, Clock, UserCircle } from 'lucide-react';
 import { Venue } from '../App';
 import { useAuth } from '../contexts/AuthContext';
@@ -135,10 +136,9 @@ export function VenueList({
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-6">
-              {venues.map((venue) => {
-                return (
+              {venues.map((venue, idx) => (
+                <FadeIn key={venue.id} delay={80 + idx * 40} transitionDuration={240}>
                   <div
-                    key={venue.id}
                     className="border border-gray-200 rounded-lg hover:border-blue-500 hover:shadow-lg transition-all group"
                   >
                     <button
@@ -202,8 +202,8 @@ export function VenueList({
                       </button>
                     </div>
                   </div>
-                );
-              })}
+                </FadeIn>
+              ))}
             </div>
           )}
 
