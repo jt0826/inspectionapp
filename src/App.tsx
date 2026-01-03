@@ -600,8 +600,9 @@ function AppContent() {
     }
   };
 
-  const handleSaveVenue = (venue: Venue) => {
-    if (currentView === 'addVenue') {
+  const handleSaveVenue = (venue: Venue, isEdit?: boolean) => {
+    if (!isEdit) {
+      // Creation flow: append venue and navigate back to venues list
       const newVenue = {
         ...venue,
         createdAt: new Date().toISOString(),
@@ -609,7 +610,11 @@ function AppContent() {
         createdBy: user?.name || 'Unknown',
       };
       setVenues([...venues, newVenue]);
+
+      // After creating, navigate back to the venues list
+      setCurrentView('venues');
     } else {
+      // Edit flow: update in-place and remain on edit screen
       const updatedVenue = {
         ...venue,
         updatedAt: new Date().toISOString(),
@@ -620,12 +625,17 @@ function AppContent() {
           i.venueId === venue.id ? { ...i, venueName: venue.name } : i
         )
       );
+
+      // If this venue is currently selected in the app state, keep it updated so the edit screen reflects latest data
+      try {
+        if (selectedVenue && String(selectedVenue.id) === String(venue.id)) {
+          setSelectedVenue(updatedVenue);
+        }
+      } catch (e) { /* ignore */ }
     }
 
     // Refresh venues from backend after save to pick up server-side state
     fetchVenues().catch(err => console.warn('Failed to refresh venues after save', err));
-
-    setCurrentView('venues');
   };
 
   const handleEditInspection = (inspection: Inspection, index: number) => {

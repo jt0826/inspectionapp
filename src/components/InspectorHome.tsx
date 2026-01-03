@@ -845,7 +845,7 @@ export function InspectorHome({
                     <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="border rounded px-2 py-1 text-sm text-gray-600 w-full sm:w-36" aria-label="End date" />
                   </label>
 
-                  <div className="w-full lg:hidden mt-1 text-xs text-gray-500">Tap to select the date range</div>
+                  <div className="w-full lg:hidden mt-1 text-xs text-gray-500">Tap to select the date</div>
                 </div>
 
                 <div className="flex items-center gap-2 mt-2 sm:mt-0 sm:ml-auto">

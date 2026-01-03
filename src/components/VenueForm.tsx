@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useToast } from './ToastProvider';
 import { ArrowLeft, Building2, Plus, Trash2, Save, Minus } from 'lucide-react';
 import { Venue, Room } from '../App';
 
@@ -6,7 +7,7 @@ const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/de
 
 interface VenueFormProps {
   venue: Venue | null;
-  onSave: (venue: Venue) => void;
+  onSave: (venue: Venue, isEdit?: boolean) => void;
   onBack: () => void;
   isEdit: boolean;
 }
@@ -77,6 +78,7 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
   };
 
   const [saving, setSaving] = useState(false);
+  const { show, confirm } = useToast();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,6 +92,17 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
     if (hasEmptyRooms) {
       alert('Please fill in all room details');
       return;
+    }
+
+    // Confirm on edit
+    if (isEdit) {
+      const confirmed = await confirm({
+        title: 'Save changes',
+        message: `Save changes to ${name}?`,
+        confirmLabel: 'Save changes',
+        cancelLabel: 'Cancel',
+      });
+      if (!confirmed) return;
     }
 
     // Prepare payload for backend
@@ -134,7 +147,7 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
       const saved = data.venue || (data.body ? JSON.parse(data.body).venue : null) || payload;
 
       // Call parent handler with saved venue
-      onSave({
+      const savedVenue = {
         id: saved.venueId || payload.venueId,
         name: saved.name,
         address: saved.address,
@@ -142,7 +155,27 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
         createdAt: saved.createdAt,
         updatedAt: saved.updatedAt,
         createdBy: saved.createdBy,
-      });
+      };
+
+      onSave(savedVenue, isEdit);
+
+      // Show toast only when backend explicitly indicates an update
+      let messageText: string | null = null;
+      if (data && data.message) messageText = String(data.message);
+      else if (data && data.body) {
+        try {
+          const parsed = typeof data.body === 'string' ? JSON.parse(data.body) : data.body;
+          if (parsed && parsed.message) messageText = String(parsed.message);
+        } catch (e) {
+          // ignore parse error
+        }
+      }
+
+      if (isEdit && messageText && messageText.toLowerCase().includes('updated')) {
+        show('Venue updated', { variant: 'success' });
+      } else if (!isEdit) {
+        try { show('Venue saved', { variant: 'success' }); } catch (e) { /* ignore */ }
+      }
 
     } catch (err) {
       console.error('Error saving venue:', err);
