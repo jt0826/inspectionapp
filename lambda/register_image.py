@@ -1,0 +1,92 @@
+import json
+import os
+import uuid
+import boto3
+from datetime import datetime, timezone, timedelta
+
+# Config
+BUCKET_NAME = 'testapp2608'
+REGION = 'ap-southeast-1'
+TABLE_NAME = 'InspectionImages'
+
+CORS_HEADERS = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type,Authorization',
+    'Access-Control-Allow-Methods': 'OPTIONS,POST',
+    'Content-Type': 'application/json'
+}
+
+s3 = boto3.client('s3', region_name=REGION)
+dynamodb = boto3.resource('dynamodb')
+
+
+def build_response(status_code, body):
+    return {
+        'statusCode': status_code,
+        'headers': CORS_HEADERS,
+        'body': json.dumps(body)
+    }
+
+
+def lambda_handler(event, context):
+    method = event.get('httpMethod') or event.get('requestContext', {}).get('http', {}).get('method')
+    if method == 'OPTIONS':
+        return build_response(204, {})
+
+    try:
+        body = {}
+        if event.get('body'):
+            try:
+                body = json.loads(event['body'])
+            except Exception:
+                body = event['body'] or {}
+
+        # Required metadata
+        key = body.get('key')
+        inspection_id = body.get('inspectionId')
+        venue_id = body.get('venueId')
+        room_id = body.get('roomId')
+        item_id = body.get('itemId')
+        filename = body.get('filename')
+        content_type = body.get('contentType')
+        filesize = int(body.get('filesize') or 0)
+        uploaded_by = body.get('uploadedBy') or 'unknown'
+        uploaded_at = body.get('uploadedAt') or datetime.utcnow().isoformat()
+
+        if not key:
+            return build_response(400, {'message': 'key is required'})
+
+        # Optional: verify object exists in S3 and get its size
+        try:
+            head = s3.head_object(Bucket=BUCKET_NAME, Key=key)
+            s3_size = head.get('ContentLength')
+            s3_content_type = head.get('ContentType')
+        except Exception as e:
+            return build_response(400, {'message': 'Uploaded object not found in S3 (did upload succeed?)', 'error': str(e)})
+
+        # Create a metadata record in DynamoDB
+        table = dynamodb.Table(TABLE_NAME)
+        image_id = str(uuid.uuid4())
+        item = {
+            'imageId': image_id,
+            'inspectionId': inspection_id,
+            'venueId': venue_id,
+            'roomId': room_id,
+            'itemId': item_id,
+            's3Key': key,
+            'filename': filename,
+            'contentType': s3_content_type or content_type,
+            'filesize': s3_size,
+            'uploadedBy': uploaded_by,
+            'uploadedAt': uploaded_at
+        }
+        table.put_item(Item=item)
+
+        # Generate a presigned GET for immediate preview (short-lived)
+        get_url = s3.generate_presigned_url('get_object', Params={'Bucket': BUCKET_NAME, 'Key': key}, ExpiresIn=3600)
+
+        return build_response(200, {'message': 'Registered', 'imageId': image_id, 'previewUrl': get_url, 'item': item})
+
+    except Exception as e:
+        print('Error in register_image:', e)
+        return build_response(500, {'message': 'Internal server error', 'error': str(e)})

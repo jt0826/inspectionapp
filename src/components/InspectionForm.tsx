@@ -30,7 +30,9 @@ const defaultInspectionItems: Omit<InspectionItem, 'status' | 'notes' | 'photos'
   { id: '13', item: 'Electrical outlets functional' },
   { id: '14', item: 'ADA accessibility requirements met' },
   { id: '15', item: 'Required signage posted' },
-];
+ ];
+
+const makePhotoId = () => 'ph_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,9);
 
 export function InspectionForm({ venue, room, onBack, onSubmit, existingInspection, inspectionId }: InspectionFormProps) {
   const { user } = useAuth();
@@ -116,6 +118,107 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
 
   const handleSubmit = async () => {
     const inspId = inspectionId || existingInspection?.id || 'insp_' + Date.now();
+
+    // Upload pending photos (if any) before saving the inspection
+    const uploadPendingPhotos = async () => {
+      for (const it of inspectionItems) {
+        const itemPhotos: any[] = (it.photos || []) as any[];
+        if (!itemPhotos || itemPhotos.length === 0) continue;
+        const updatedPhotos = [...itemPhotos];
+        let changed = false;
+        for (let pi = 0; pi < itemPhotos.length; pi++) {
+          const p = itemPhotos[pi] as any;
+          if (p && p.file) {
+            // upload this file
+            try {
+              // mark as uploading
+              updatedPhotos[pi] = { ...p, status: 'uploading' };
+              updateItem(it.id, { photos: updatedPhotos });
+
+              // request signed url
+              const signResp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/sign-upload', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  inspectionId: inspId,
+                  venueId: venue.id,
+                  roomId: room.id,
+                  itemId: it.id,
+                  filename: p.filename,
+                  contentType: p.contentType,
+                  fileSize: p.filesize,
+                  uploadedBy: (user && user.name) || 'unknown'
+                })
+              });
+              if (!signResp.ok) throw new Error('Failed to obtain signed URL');
+              const signData = await signResp.json();
+              const uploadUrl = signData.uploadUrl;
+              const key = signData.key;
+
+              // upload to s3
+              const putResp = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': p.contentType }, body: p.file });
+              if (!putResp.ok) throw new Error('Failed to upload to S3');
+              await new Promise(resolve => setTimeout(resolve, 500)); // slight delay to ensure S3 consistency
+
+              // register metadata
+              const registerResp = await fetch(`https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/register-image`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  key,
+                  inspectionId: inspId,
+                  venueId: venue.id,
+                  roomId: room.id,
+                  itemId: it.id,
+                  filename: p.filename,
+                  contentType: p.contentType,
+                  filesize: p.filesize,
+                  uploadedBy: (user && user.name) || 'unknown',
+                  uploadedAt: new Date().toISOString()
+                })
+              });
+              if (!registerResp.ok) throw new Error('Failed to register image');
+              const reg = await registerResp.json();
+
+              // replace photo entry with registered metadata
+              updatedPhotos[pi] = {
+                id: p.id,
+                imageId: reg.imageId || reg.item?.imageId || null,
+                s3Key: reg.item?.s3Key || key,
+                preview: reg.previewUrl || null,
+                filename: makePhotoId,
+                contentType: p.contentType,
+                filesize: p.filesize,
+                uploadedAt: new Date().toISOString(),
+                uploadedBy: (user && user.name) || 'unknown',
+                status: 'uploaded'
+              };
+
+              updateItem(it.id, { photos: updatedPhotos });
+              changed = true;
+            } catch (e) {
+              console.error('Failed to upload/register photo for item', it.id, e);
+              alert('Failed to upload one or more photos. Save aborted. See console.');
+              throw e;
+            }
+          }
+        }
+        if (changed) {
+          // ensure state updated (already updated inside loop)
+        }
+      }
+    };
+
+    try {
+      // First, upload any pending photos
+      await uploadPendingPhotos();
+    } catch (err) {
+      console.error('Failed to upload pending photos:', err);
+      alert('Failed to upload photos. Save aborted. See console.');
+      // Abort save flow
+      return;
+    }
+
     const inspectionToSubmit: Inspection = {
       id: inspId,
       venueId: venue.id,
@@ -145,7 +248,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
           roomName: inspectionToSubmit.roomName,
           timestamp: inspectionToSubmit.timestamp,
           inspectorName: inspectionToSubmit.inspectorName,
-          items: inspectionToSubmit.items.map((it) => ({ itemId: it.id, status: it.status, notes: it.notes, itemName: it.item }))
+          items: inspectionToSubmit.items.map((it: any) => ({ itemId: it.id, status: it.status, notes: it.notes, itemName: it.item, order: it.order, images: (it.photos || []).filter((p: any) => p.imageId).map((p: any) => ({ imageId: p.imageId, s3Key: p.s3Key, filename: p.filename })) }))
         }
       };
 
@@ -188,17 +291,40 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
   // Items no longer have categories; render a flat list
 
   const handlePhotoUpload = (id: string, file: File) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      updateItem(id, { photos: [...inspectionItems.find(i => i.id === id)?.photos || [], reader.result as string] });
-    };
-    reader.readAsDataURL(file);
+    // Accept file and create a preview; actual upload will occur on Save
+    const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+    if (file.size > MAX_BYTES) {
+      alert('File too large (max 5 MB)');
+      return;
+    }
+
+    const preview = URL.createObjectURL(file);
+    const photoObj = { id: makePhotoId(), file, preview, status: 'pending', filename: file.name, contentType: file.type, filesize: file.size } as any;
+
+    const currentPhotos = inspectionItems.find(i => i.id === id)?.photos || [];
+    updateItem(id, { photos: [...currentPhotos, photoObj] });
   };
 
   const removePhoto = (id: string, index: number) => {
     const currentPhotos = inspectionItems.find(i => i.id === id)?.photos || [];
+    const toRemove = currentPhotos[index];
+    if (toRemove && toRemove.preview && typeof toRemove.preview === 'string' && toRemove.preview.startsWith('blob:')) {
+      try { URL.revokeObjectURL(toRemove.preview); } catch (e) { /* ignore */ }
+    }
     updateItem(id, { photos: currentPhotos.filter((_, i) => i !== index) });
   };
+
+  useEffect(() => {
+    return () => {
+      inspectionItems.forEach(it => {
+        (it.photos || []).forEach((p: any) => {
+          if (p && p.preview && typeof p.preview === 'string' && p.preview.startsWith('blob:')) {
+            try { URL.revokeObjectURL(p.preview); } catch (e) { /* ignore */ }
+          }
+        });
+      });
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-white pb-24 lg:pb-32">
@@ -310,25 +436,28 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                         {/* Photo Grid */}
                         {item.photos.length > 0 && (
                           <div className="grid grid-cols-3 gap-2 mb-2">
-                            {item.photos.map((photo, photoIndex) => (
-                              <div key={photoIndex} className="relative group">
-                                <img
-                                  src={photo}
-                                  alt={`Evidence ${photoIndex + 1}`}
-                                  width={80}
-                                  height={80}
-                                  className="w-full h-20 object-cover rounded border border-gray-300"
-                                />
-                                <button
-                                  type="button"
-                                  aria-label="Remove photo"
-                                  onClick={() => removePhoto(item.id, photoIndex)}
-                                  className="absolute top-2 right-2 bg-red-600 text-white rounded-full p-2 opacity-0 group-hover:opacity-100 transition-opacity"
-                                >
-                                  <X className="w-3 h-3" />
-                                </button>
-                              </div>
-                            ))}
+                            {item.photos.map((photo: any, photoIndex: number) => {
+                              const src = typeof photo === 'string' ? photo : (photo.preview || photo.previewUrl || '');
+                              return (
+                                <div key={photo.id ?? photoIndex} className="relative group">
+                                  <img
+                                    src={src}
+                                    alt={`Evidence ${photoIndex + 1}`}
+                                    width={80}
+                                    height={80}
+                                    className="w-full h-20 object-cover rounded border border-gray-300"
+                                  />
+                                  <button
+                                    type="button"
+                                    aria-label="Remove photo"
+                                    onClick={() => removePhoto(item.id, photoIndex)}
+                                    className="absolute top-2 right-2 bg-red-600 text-white rounded-full p-2 opacity-0 group-hover:opacity-100 transition-opacity"
+                                  >
+                                    <X className="w-3 h-3" />
+                                  </button>
+                                </div>
+                              );
+                            })}
                           </div>
                         )}
                         
