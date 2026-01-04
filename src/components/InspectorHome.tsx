@@ -7,6 +7,7 @@ import InspectionCard from './InspectionCard';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from './ToastProvider';
 import FadeIn from 'react-fade-in';
+import LoadingOverlay from './LoadingOverlay';
 
 type Room = { id?: string; roomId?: string; items?: Record<string, unknown>[]; name?: string };
 type Venue = { id?: string; venueId?: string; name?: string; rooms?: Room[] };
@@ -46,6 +47,9 @@ export function InspectorHome({
   const [completedMap, setCompletedMap] = useState<Record<string, boolean>>({});
   const [serverProvidedSummaries, setServerProvidedSummaries] = useState<boolean>(false);
 
+  // Maximum completed items to request for the Home page (keeps payload small)
+  const MAX_HOME_COMPLETED = 6;
+
   // Local UI state for delete flow
   const [deleting, setDeleting] = useState(false);
   const { show, confirm } = useToast();
@@ -70,7 +74,7 @@ export function InspectorHome({
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ action: 'list_inspections' }),
+        body: JSON.stringify({ action: 'list_inspections', completed_limit: MAX_HOME_COMPLETED }),
       });
 
       const data = await response.json();
@@ -156,6 +160,22 @@ export function InspectorHome({
 
       console.log('[Inspections] resolved items count:', inspectionsArray.length, inspectionsArray[0]);
       setDynamoInspections(inspectionsArray);
+      // Cache inspections in-memory so other pages can synchronously read them if needed
+      try {
+        if (typeof window !== 'undefined') {
+          (window as any).__inspectionsData = inspectionsArray;
+        }
+      } catch (e) {
+        /* ignore */
+      }
+      // Notify interested consumers (e.g., VenueList) so they can compute per-venue inspection counts
+      try {
+        if (typeof window !== 'undefined' && window.dispatchEvent) {
+          window.dispatchEvent(new CustomEvent('inspectionsLoaded', { detail: { inspections: inspectionsArray } }));
+        }
+      } catch (e) {
+        console.warn('Failed to dispatch inspectionsLoaded event', e);
+      }
     } catch (error) {
       console.error('Error fetching inspections:', error);
       setDynamoInspections([]);
@@ -280,9 +300,16 @@ export function InspectorHome({
     return inspectionSummaries[id] as Summary | undefined;
   };
 
-  // Completed inspections list (derived from status or completedMap)
+  // Completed inspections list (derived from server-provided partition when available, otherwise status field)
   const completedInspections = dynamoInspections
-    .filter((inspection: Record<string, unknown>) => (((String(inspection['status'] || '')).toLowerCase() === 'completed') || completedMap[String(inspection['inspection_id'] || '')]))
+    .filter((inspection: Record<string, unknown>) => {
+      const id = String(inspection['inspection_id'] || '');
+      if (serverProvidedSummaries) {
+        // Use the server-provided completed partition as authoritative
+        return !!completedMap[id];
+      }
+      return ((String(inspection['status'] || '')).toLowerCase() === 'completed');
+    })
     .map((inspection: Record<string, unknown>) => {
       const vid = (inspection['venue_id'] as string) || (inspection['venueId'] as string) || (inspection['venue'] as string) || '';
       const venueObj = (venues || []).find((v: Venue) => String(v.id || v.venueId) === vid) || null;
@@ -312,8 +339,8 @@ export function InspectorHome({
       };
     });
 
-  // Show only the most recent N completed inspections on the Home page to avoid clutter
-  const MAX_HOME_COMPLETED = 6;
+  // Show only the most recent N completed inspections on the Home page to avoid clutter (value defined above)
+  
 
   // No client-side date filtering on the Home page — date range moved to History
   const filteredCompletedInspections = completedInspections;
@@ -390,6 +417,7 @@ export function InspectorHome({
   
   return (
     <div className="min-h-screen bg-white">
+      <LoadingOverlay visible={loading || deleting} message={deleting ? 'Deleting…' : 'Loading…'} />
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="bg-blue-600 text-white p-6 lg:p-8">
@@ -492,7 +520,8 @@ export function InspectorHome({
               <p className="text-gray-500 mb-4 text-sm lg:text-base">No ongoing inspections</p>
               <button
                 onClick={onCreateNewInspection}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm lg:text-base"
+                disabled={loading || deleting}
+                className="inline-flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm lg:text-base disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 <Plus className="w-5 h-5" />
                 <span>Create New Inspection</span>
@@ -505,7 +534,7 @@ export function InspectorHome({
                   <InspectionCard
                     inspection={inspection}
                     variant="ongoing"
-                    onClick={() => onResumeInspection(inspection)}
+                    onClick={() => { if (!loading && !deleting) onResumeInspection(inspection); }}
                     onDelete={(e: React.MouseEvent) => handleDeleteInspection(e, inspection)}
                     isDeleting={deletingIds.includes(inspection.id)}
                     summary={getSummary(inspection.id)}

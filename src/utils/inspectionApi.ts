@@ -1,7 +1,6 @@
 export async function getInspectionSummary(inspectionId: string) {
   if (!inspectionId) return null;
-  // Primary summary endpoint (may not be supported by all deployments)
-  // New consolidated inspections query endpoint
+  // Consolidated inspections query endpoint — expect JSON response with body containing summary
   const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-query';
   try {
     const res = await fetch(API_BASE, {
@@ -10,92 +9,23 @@ export async function getInspectionSummary(inspectionId: string) {
       body: JSON.stringify({ action: 'get_inspection_summary', inspection_id: inspectionId }),
     });
 
-    const text = await res.text().catch(() => '');
-    console.log('[API][getInspectionSummary] rawText:', text);
-
-
     if (!res.ok) {
-      // If the endpoint explicitly does not support this action, fallback to computing the summary from raw items
-      try {
-        const parsed = text ? JSON.parse(text) : null;
-        if (parsed && typeof parsed.message === 'string' && parsed.message.toLowerCase().includes('unsupported action')) {
-          const items = await getInspectionItems(inspectionId);
-          if (!items) return null;
-          return computeSummaryFromItems(items);
-        }
-      } catch (e) {
-        // ignore parse errors and fall through to logging
-      }
-
+      const text = await res.text().catch(() => '');
       console.warn('getInspectionSummary non-ok', res.status, text, API_BASE);
       return null;
     }
 
-    // Parse body if possible
-    let data: any = null;
-    try { data = text ? JSON.parse(text) : await res.json(); } catch (e) { try { data = await res.json(); } catch (_) { data = null; } }
+    // Parse and return the canonical body payload
+    const data = await res.json();
     const body = data?.body ? (typeof data.body === 'string' ? JSON.parse(data.body) : data.body) : data;
-    console.log('[API][getInspectionSummary] parsedData:', data);
-    console.log('[API][getInspectionSummary] body:', body);
-
-
-    // If service did not return a usable summary, compute it from raw items as a fallback
-    if (!body || (!body.totals && !body.byRoom)) {
-      const items = await getInspectionItems(inspectionId);
-      console.log('[API][getInspectionSummary] fallback items:', items);
-      if (items && Array.isArray(items)) {
-        const summary = computeSummaryFromItems(items);
-        console.log('[API][getInspectionSummary] computed summary from items:', summary);
-        return { ...(body || {}), ...summary } as any;
-      }
-    }
-
-    return body;
+    return body || null;
   } catch (e) {
     console.warn('getInspectionSummary failed', e);
     return null;
   }
 }
 
-function computeSummaryFromItems(items: any[]) {
-  console.log('[computeSummaryFromItems] items:', items);
-  const totals: any = { pass: 0, fail: 0, na: 0, pending: 0, total: 0 };
-  const byRoom: Record<string, any> = {};
-  let latestTs: string | null = null;
-  let latestBy: string | null = null;
 
-  for (const it of items as any[]) {
-    // Ignore meta rows (rows without an item identifier)
-    const itemId = it?.itemId || it?.item || it?.ItemId || it?.id || null;
-    if (!itemId) continue;
-
-    const status = String(it?.status || it?.state || 'pending').toLowerCase();
-    totals.total += 1;
-    if (status === 'pass') totals.pass++;
-    else if (status === 'fail') totals.fail++;
-    else if (status === 'na') totals.na++;
-    else totals.pending++;
-
-    // By room breakdown
-    const rid = String(it?.roomId || it?.room_id || it?.room || '');
-    const br = byRoom[rid] || (byRoom[rid] = { pass: 0, fail: 0, na: 0, pending: 0, total: 0 });
-    br.total += 1;
-    if (status === 'pass') br.pass++;
-    else if (status === 'fail') br.fail++;
-    else if (status === 'na') br.na++;
-    else br.pending++;
-
-    const tsRaw = it?.updatedAt || it?.updated_at || it?.createdAt || it?.created_at;
-    const ts = tsRaw ? String(tsRaw) : null;
-    if (ts && (!latestTs || new Date(ts) > new Date(latestTs))) {
-      latestTs = ts;
-      latestBy = it?.inspectorName || it?.createdBy || it?.inspector_name || it?.created_by || null;
-    }
-  }
-
-  console.log('[computeSummaryFromItems] totals:', totals, 'byRoom:', byRoom, 'updatedAt:', latestTs, 'updatedBy:', latestBy);
-  return { totals, byRoom, updatedAt: latestTs, updatedBy: latestBy };
-}
 
 export async function checkInspectionComplete(inspectionId: string, venueId: string) {
   if (!inspectionId || !venueId) return null;
@@ -263,25 +193,15 @@ export async function getInspections() {
       body: JSON.stringify({ action: 'list_inspections' }),
     });
 
-    const text = await res.text().catch(() => '');
-    console.log('[API][getInspections] rawText:', text);
-    let data: any = null;
-    try { data = text ? JSON.parse(text) : null; } catch (e) { try { data = await res.json(); } catch (e) { data = null; } }
-    console.log('[API][getInspections] parsedData:', data);
-
-    let items: any[] = [];
-    if (Array.isArray(data?.inspections)) items = data.inspections;
-    else if (Array.isArray(data)) items = data;
-    else if (data?.body) {
-      try {
-        const parsed = typeof data.body === 'string' ? JSON.parse(data.body) : data.body;
-        items = parsed.inspections || parsed.Items || [];
-      } catch (e) {
-        console.warn('Failed to parse list_inspections.body', e);
-      }
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      console.warn('getInspections non-ok', res.status, txt, API_BASE);
+      return [];
     }
 
-    console.log('[API][getInspections] items:', items);
+    const data = await res.json();
+    const body = data?.body ? (typeof data.body === 'string' ? JSON.parse(data.body) : data.body) : data;
+    const items: any[] = Array.isArray(body?.inspections) ? body.inspections : [];
     return items;
   } catch (e) {
     console.warn('getInspections failed', e);
@@ -290,13 +210,15 @@ export async function getInspections() {
 }
 
 // New helper: return the parsed body from list_inspections including any server-provided partitions like 'completed'/'ongoing'
-export async function getInspectionsPartitioned() {
+export async function getInspectionsPartitioned(opts?: { completedLimit?: number | null }) {
   const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-query';
   try {
+    const bodyPayload: any = { action: 'list_inspections' };
+    if (opts && typeof opts.completedLimit !== 'undefined') bodyPayload.completed_limit = opts.completedLimit;
     const res = await fetch(API_BASE, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'list_inspections' }),
+      body: JSON.stringify(bodyPayload),
     });
 
     if (!res.ok) {

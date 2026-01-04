@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import FadeIn from 'react-fade-in';
 import { ArrowLeft, Building2, MapPin, Plus, Edit2, Trash2, User, LogOut, Clock, UserCircle } from 'lucide-react';
 import { Venue } from '../App';
@@ -7,6 +7,7 @@ import { useToast } from './ToastProvider';
 import type { Inspection } from '../App';
 
 import { getVenues } from '../utils/venueApi';
+import LoadingOverlay from './LoadingOverlay';
 
 interface VenueListProps {
   venues: Venue[];
@@ -17,7 +18,6 @@ interface VenueListProps {
   onEditVenue: (venue: Venue) => void;
   onDeleteVenue: (venueId: string) => void;
   onBack: () => void;
-  inspectionsCount?: Record<string, number>;
   onVenuesLoaded?: (venues: Venue[]) => void; // optional callback to inform parent that venues have been loaded
 } 
 
@@ -30,18 +30,89 @@ export function VenueList({
   onEditVenue,
   onDeleteVenue,
   onBack,
-  inspectionsCount,
   onVenuesLoaded,
 }: VenueListProps) {
   const { user, logout } = useAuth();
 
   const [deleting, setDeleting] = useState(false);
+  const [computing, setComputing] = useState(false); // true while computing counts before delete confirmation
   const [localVenues, setLocalVenues] = useState<Venue[]>(venues || []);
+  const [rawInspectionsCount, setRawInspectionsCount] = useState<Record<string, number>>({});
+  const [inspectionsList, setInspectionsList] = useState<any[]>([]);
+  const [computedInspectionsCount, setComputedInspectionsCount] = useState<Record<string, number>>({});
   // Use global toast + confirm
   const { show, confirm } = useToast();
 
+  // Listen for inspectionsLoaded events emitted by InspectorHome and keep both the raw list and a raw count map
+  useEffect(() => {
+    const handler = (e: any) => {
+      try {
+        const ins: any[] = e?.detail?.inspections || [];
+        setInspectionsList(ins || []);
+        const rawMap: Record<string, number> = {};
+        (ins || []).forEach((it: any) => {
+          const vid = String(it?.venueId || it?.venue_id || it?.venue || '');
+          if (!vid) return;
+          rawMap[vid] = (rawMap[vid] || 0) + 1;
+        });
+        setRawInspectionsCount(rawMap);
+      } catch (err) {
+        console.warn('Failed to compute raw inspections count from inspectionsLoaded event', err);
+      }
+    };
+
+    // If InspectorHome already fetched inspections, read the cached data synchronously
+    try {
+      const cached = (window as any).__inspectionsData;
+      if (Array.isArray(cached)) {
+        handler({ detail: { inspections: cached } });
+      }
+    } catch (e) {
+      /* ignore */
+    }
+
+    window.addEventListener('inspectionsLoaded', handler as EventListener);
+    return () => window.removeEventListener('inspectionsLoaded', handler as EventListener);
+  }, []);
+
+  // Reconcile raw inspection counts to canonical venue IDs whenever raw counts or local venues change
+  useEffect(() => {
+    const result: Record<string, number> = {};
+    // initialize zero counts for known local venues
+    (localVenues || []).forEach((v) => {
+      const canonical = String(v.id || (v as any).venueId || '');
+      if (canonical) result[canonical] = 0;
+    });
+
+    // Count by scanning the inspections list and matching to local venues
+    (inspectionsList || []).forEach((ins) => {
+      const vid = String(ins?.venueId || ins?.venue_id || ins?.venue || '');
+      const vname = String(ins?.venueName || ins?.venue_name || '');
+      if (!vid && !vname) return;
+
+      // Try to find a matching local venue by id/venueId/name
+      const match = (localVenues || []).find((v) => {
+        const canonical = String(v.id || (v as any).venueId || '');
+        if (canonical && canonical === vid) return true;
+        if ((v as any).venueId && String((v as any).venueId) === vid) return true;
+        if (String(v.name || '') && String(v.name || '') === vname) return true;
+        return false;
+      });
+
+      if (match) {
+        const canonical = String(match.id || (match as any).venueId || '');
+        result[canonical] = (result[canonical] || 0) + 1;
+      } else {
+        // If no local match, keep a count keyed by the raw vid so we can reference it in delete confirmations
+        result[vid || vname] = (result[vid || vname] || 0) + 1;
+      }
+    });
+
+    setComputedInspectionsCount(result);
+  }, [inspectionsList, localVenues]);
+
   // Fetch venues when this page loads if none provided
-  React.useEffect(() => {
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       if (venues && venues.length > 0) {
@@ -63,24 +134,37 @@ export function VenueList({
 
   const handleDeleteClick = async (e: React.MouseEvent, venue: Venue) => {
     e.stopPropagation();
-    const count = inspectionsCount?.[venue.id] ?? 0;
 
-    // Compute number of uploaded images across all inspections for this venue (best-effort)
+    // First, compute accurate counts from server (inspections & images) so we can show an exact confirmation message
+    setComputing(true);
+    let venueInsps: any[] = [];
     let totalImages = 0;
-    if (count > 0) {
-      try {
-        const { getInspections } = await import('../utils/inspectionApi');
-        const { listImagesForInspection } = await import('../utils/inspectionApi');
-        const allInsps = await getInspections();
-        const venueInsps = (allInsps || []).filter((ins: any) => String(ins.venueId || ins.venue_id || ins.venue) === String(venue.id));
-        for (const ins of venueInsps) {
-          const imgs = await listImagesForInspection(String(ins.inspection_id || ins.id));
-          totalImages += (imgs && imgs.length) || 0;
+    try {
+      const { getInspections, listImagesForInspection } = await import('../utils/inspectionApi');
+      const allInsps = await getInspections();
+      venueInsps = (allInsps || []).filter((ins: any) => String(ins.venueId || ins.venue_id || ins.venue) === String(venue.id));
+
+      if (venueInsps.length > 0) {
+        // fetch image counts in parallel per inspection
+        try {
+          const counts = await Promise.all(
+            venueInsps.map((ins) => listImagesForInspection(String(ins.inspection_id || ins.id)).then((imgs: any[]) => (Array.isArray(imgs) ? imgs.length : 0)).catch(() => 0))
+          );
+          totalImages = counts.reduce((s, n) => s + (n || 0), 0);
+        } catch (e) {
+          console.warn('Failed to fetch image counts for venue inspections', e);
         }
-      } catch (e) {
-        console.warn('Failed to compute image count for venue', e);
       }
+    } catch (e) {
+      console.warn('Failed to compute inspection/image counts for venue', e);
+      // Fallback to previously computed counts if available
+      venueInsps = [];
+      try { const fallback = computedInspectionsCount[String(venue.id)]; if (fallback) { venueInsps = new Array(fallback).fill(null); } } catch (err) { /* ignore */ }
+    } finally {
+      setComputing(false);
     }
+
+    const count = venueInsps.length;
 
     const confirmed = await confirm({
       title: 'Delete venue',
@@ -154,6 +238,7 @@ export function VenueList({
 
   return (
     <div className="min-h-screen bg-white">
+      <LoadingOverlay visible={deleting || computing} message={deleting ? 'Deleting…' : 'Checking linked inspections…'} />
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="bg-blue-600 text-white p-6 lg:p-8">
@@ -249,7 +334,7 @@ export function VenueList({
                         </div>
                         {/* Always reserve space for inspections count so UI alignment remains stable even when count is 0 or unavailable */}
                         <div className="flex items-center gap-2 text-xs text-gray-500">
-                          <span className="truncate">Inspections: <span className="text-gray-700 inline-block min-w-[0.5rem] text-right">{(inspectionsCount && inspectionsCount[venue.id] !== undefined) ? inspectionsCount[venue.id] : 0}</span></span>
+                          <span className="truncate">Inspections: <span className="text-gray-700 inline-block min-w-[0.5rem] text-right">{computedInspectionsCount[String(venue.id)] ?? 0}</span></span>
                         </div>
                       </div>
 

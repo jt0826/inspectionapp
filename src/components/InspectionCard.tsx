@@ -70,25 +70,29 @@ export const InspectionCard = ({ inspection, variant = 'ongoing', onClick, onDel
                 Last updated: <FadeInText visible={!!lastUpdated} className="inline-block">{lastUpdated ? formatDate(lastUpdated) : <span className="text-gray-400">—</span>}</FadeInText>
               </span>
             </div>
-            <div className={`text-xs ${subtitleClass} block`}>Last updated by: <span className="font-medium">{lastUpdatedBy ?? <span className="text-gray-400">—</span>}</span></div>
+            <div className={`text-xs lg:text-sm ${subtitleClass} block`}>Last updated by: <span className="font-medium">{lastUpdatedBy ?? <span className="text-gray-400">—</span>}</span></div>
 
             {totals && (
               <div className="flex gap-4 text-sm mt-2">
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-green-600" />
-                  <span className="text-gray-700">Pass: <NumberFlow value={totals.pass ?? null} className="inline-block" /></span>
+                <div className="flex items-center gap-2" title={`Pass: ${totals.pass ?? 0}`}>
+                  <CheckCircle2 className="w-4 h-4 text-green-600" aria-hidden="true" />
+                  <span className="text-gray-700"><NumberFlow value={totals.pass ?? null} className="inline-block" /></span>
+                  <span className="sr-only">Pass</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <XCircle className="w-4 h-4 text-red-600" />
-                  <span className="text-gray-700">Fail: <NumberFlow value={totals.fail ?? null} className="inline-block" /></span>
+                <div className="flex items-center gap-2" title={`Fail: ${totals.fail ?? 0}`}>
+                  <XCircle className="w-4 h-4 text-red-600" aria-hidden="true" />
+                  <span className="text-gray-700"><NumberFlow value={totals.fail ?? null} className="inline-block" /></span>
+                  <span className="sr-only">Fail</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <MinusCircle className="w-4 h-4 text-gray-400" />
-                  <span className="text-gray-700">NA: <NumberFlow value={totals.na ?? null} className="inline-block" /></span>
+                <div className="flex items-center gap-2" title={`NA: ${totals.na ?? 0}`}>
+                  <MinusCircle className="w-4 h-4 text-gray-400" aria-hidden="true" />
+                  <span className="text-gray-700"><NumberFlow value={totals.na ?? null} className="inline-block" /></span>
+                  <span className="sr-only">Not applicable</span>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-yellow-500" />
-                  <span className="text-gray-700">Pending: <NumberFlow value={totals.pending ?? null} className="inline-block" /></span>
+                <div className="flex items-center gap-2" title={`Pending: ${totals.pending ?? 0}`}>
+                  <Clock className="w-4 h-4 text-yellow-500" aria-hidden="true" />
+                  <span className="text-gray-700"><NumberFlow value={totals.pending ?? null} className="inline-block" /></span>
+                  <span className="sr-only">Pending</span>
                 </div>
               </div>
             )}

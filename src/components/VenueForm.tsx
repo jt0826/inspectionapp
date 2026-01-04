@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useToast } from './ToastProvider';
 import { ArrowLeft, Building2, Plus, Trash2, Save, Minus } from 'lucide-react';
 import { Venue, Room } from '../App';
+import LoadingOverlay from './LoadingOverlay';
 
 const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/venues-create'; // consolidated venues-create endpoint
 
@@ -187,6 +188,7 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
 
   return (
     <div className="max-w-md mx-auto min-h-screen bg-white pb-24">
+      <LoadingOverlay visible={saving} message={isEdit ? 'Saving…' : 'Adding…'} />
       {/* Header */}
       <div className="bg-blue-600 text-white p-6 pb-8 sticky top-0 z-10">
         <button onClick={onBack} className="flex items-center gap-2 text-blue-100 hover:text-white mb-4">
@@ -213,8 +215,7 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g., Downtown Office Complex"
                 className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
-                required
-              />
+                required                disabled={saving}              />
             </div>
             <div>
               <label className="block text-gray-700 mb-2">Address *</label>
@@ -224,8 +225,7 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
                 onChange={(e) => setAddress(e.target.value)}
                 placeholder="e.g., 123 Main Street"
                 className="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
-                required
-              />
+                required                disabled={saving}              />
             </div>
           </div>
         </div>
@@ -237,7 +237,8 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
             <button
               type="button"
               onClick={handleAddRoom}
-              className="flex items-center gap-1 text-blue-600 hover:text-blue-700 text-sm"
+              disabled={saving}
+              className="flex items-center gap-1 text-blue-600 hover:text-blue-700 text-sm disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <Plus className="w-4 h-4" />
               <span>Add Room</span>
@@ -252,7 +253,8 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
                     <button
                       type="button"
                       onClick={() => handleRemoveRoom(index)}
-                      className="text-red-600 hover:text-red-700"
+                      disabled={saving}
+                      className="text-red-600 hover:text-red-700 disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <Trash2 className="w-4 h-4" />
                     </button>
@@ -275,7 +277,7 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
                     <div className="mt-3">
                       <div className="flex items-center justify-between mb-2">
                         <label className="block text-gray-700 text-sm">Items</label>
-                        <button type="button" onClick={() => handleAddItem(index)} className="text-blue-600 hover:text-blue-700 text-sm flex items-center gap-1">
+                        <button type="button" onClick={() => handleAddItem(index)} disabled={saving} className="text-blue-600 hover:text-blue-700 text-sm flex items-center gap-1 disabled:opacity-60 disabled:cursor-not-allowed">
                           <Plus className="w-4 h-4" />
                           <span className="text-xs">Add Item</span>
                         </button>
@@ -291,7 +293,7 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
                               placeholder="e.g., Extinguisher"
                               className="flex-1 p-2 border border-gray-300 rounded text-sm text-gray-900"
                             />
-                            <button type="button" onClick={() => handleRemoveItem(index, idx)} className="text-red-600 hover:text-red-700 p-2">
+                            <button type="button" onClick={() => handleRemoveItem(index, idx)} disabled={saving} className="text-red-600 hover:text-red-700 p-2 disabled:opacity-60 disabled:cursor-not-allowed">
                               <Minus className="w-4 h-4" />
                             </button>
                           </div>

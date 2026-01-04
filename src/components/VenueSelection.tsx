@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Building2, MapPin, ChevronRight, CheckCircle2, ChevronDown } from 'lucide-react';
 import { Venue } from '../App';
+import LoadingOverlay from './LoadingOverlay';
 
 interface VenueSelectionProps {
   venues: Venue[];
@@ -17,6 +18,7 @@ interface VenueSelectionProps {
 export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectionId, isCreatingNewInspection, onInspectionCreated }: VenueSelectionProps) {
   const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
   const [localVenues, setLocalVenues] = useState<Venue[]>(venues || []);
+  const [creating, setCreating] = useState(false);
 
   // If parent didn't provide venues, load them on mount so selection is available
   React.useEffect(() => {
@@ -73,6 +75,7 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
     };
 
     try {
+      setCreating(true);
       {/* IMPORTANT: call the new inspections-create resource to create an inspection */}
       const response = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-create', {
         method: 'POST',
@@ -99,6 +102,8 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
       }
     } catch (error) {
       console.error('Error creating inspection:', error);
+    } finally {
+      setCreating(false);
     }
   }
   
@@ -147,7 +152,8 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
                   >
                     <button
                       onClick={() => handleVenueClick(venue)}
-                      className="w-full text-left p-5 lg:p-6"
+                      disabled={creating}
+                      className="w-full text-left p-5 lg:p-6 disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <div className="flex items-start justify-between">
                         <div className="flex-1 min-w-0">
@@ -207,9 +213,10 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
         {/* Fixed Bottom Create Button */}
         {selectedVenue && (
           <div className="fixed bottom-0 left-0 right-0 p-4 lg:p-6 pb-[calc(1rem+env(safe-area-inset-bottom))] bg-white border-t shadow-lg max-w-4xl mx-auto">
+            <LoadingOverlay visible={creating} message="Creating…" />
             <button
               onClick={handleCreateInspection}
-              disabled={!selectedVenue}
+              disabled={!selectedVenue || creating}
               className={`w-full py-4 lg:py-5 px-6 rounded-xl transition-all flex items-center justify-center gap-3 group ${!selectedVenue ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg hover:shadow-xl'}`}
             >
               <CheckCircle2 className="w-6 h-6 lg:w-7 lg:h-7" />

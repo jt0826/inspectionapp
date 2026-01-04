@@ -754,7 +754,6 @@ function AppContent() {
           onEditVenue={handleEditVenue}
           onDeleteVenue={handleDeleteVenue}
           onBack={() => setCurrentView('home')}
-          inspectionsCount={inspectionsCountMap}
           onVenuesLoaded={(v) => setVenues(v)}
         />
       )}

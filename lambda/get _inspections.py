@@ -25,6 +25,9 @@ CORS_HEADERS = {
     'Content-Type': 'application/json'
 }
 
+# Limit for completed items to return on Home page to reduce payload and improve load times
+MAX_HOME_COMPLETED = 6
+
 # Initialize DynamoDB client
 dynamodb = boto3.resource('dynamodb')
 table_name = 'InspectionData'  # Replace with your table name
@@ -224,10 +227,47 @@ def lambda_handler(event, context):
                 else:
                     ongoing.append(obj)
 
+            # Sort completed by most-recent completion/updated/created timestamp and limit result to MAX_HOME_COMPLETED to reduce payload
+            def _get_sort_ts(o):
+                for key in ('completedAt', 'completed_at', 'updatedAt', 'updated_at', 'createdAt', 'created_at'):
+                    v = o.get(key)
+                    if v:
+                        dt = _parse_iso_to_aware(v)
+                        if dt:
+                            return dt.timestamp()
+                return 0
+
+            # Support client-requested completed limit: use body.completed_limit or body.completedLimit
+            completed_limit_raw = None
+            try:
+                if isinstance(body, dict):
+                    completed_limit_raw = body.get('completed_limit') if 'completed_limit' in body else body.get('completedLimit')
+            except Exception:
+                completed_limit_raw = None
+
+            try:
+                if completed_limit_raw is None:
+                    limit = MAX_HOME_COMPLETED
+                else:
+                    try:
+                        limit = int(completed_limit_raw)
+                    except Exception:
+                        limit = MAX_HOME_COMPLETED
+
+                completed_sorted = sorted(completed, key=_get_sort_ts, reverse=True)
+                if limit > 0:
+                    completed_limited = completed_sorted[:limit]
+                else:
+                    # non-positive limit (0 or negative) means no limit -> return all
+                    completed_limited = completed_sorted
+            except Exception:
+                # fallback: return full list (best-effort)
+                completed_limited = completed
+
             return {
                 'statusCode': 200,
                 'headers': CORS_HEADERS,
-                'body': json.dumps({'inspections': inspections, 'completed': completed, 'ongoing': ongoing})
+                'body': json.dumps({'inspections': inspections, 'completed': completed_limited, 'ongoing': ongoing})
             }
 
         # GET_INSPECTION: return raw items for a given inspection id

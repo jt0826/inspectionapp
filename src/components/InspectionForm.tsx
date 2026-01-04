@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
-import { ArrowLeft, CheckCircle2, XCircle, MinusCircle, Save, Camera, X } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { ArrowLeft, CheckCircle2, XCircle, MinusCircle, Save, Camera, X, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Venue, Room, InspectionItem, Inspection } from '../App';
 import { useAuth } from '../contexts/AuthContext';
 import { getInspectionItems, getInspections } from '../utils/inspectionApi';
 import { useToast } from './ToastProvider';
+import LoadingOverlay from './LoadingOverlay';
 
 interface InspectionFormProps {
   venue: Venue;
@@ -85,7 +86,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
     id: string,
     updates: Partial<Pick<InspectionItem, 'status' | 'notes' | 'photos'>>
   ) => {
-    if (isReadOnly) return; // no-op in read-only mode
+    if (isReadOnly || saving || loadingSaved) return; // no-op in read-only or while busy
     setInspectionItems((prev) => {
       const updated = prev.map((item) => (item.id === id ? { ...item, ...updates } : item));
       return updated;
@@ -93,7 +94,65 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
   };
 
   const [saving, setSaving] = useState(false);
+  const [loadingSaved, setLoadingSaved] = useState(false); // true while we fetch saved inspection data
   const { show, confirm } = useToast();
+
+  // Search/filter UI
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [debouncedQuery, setDebouncedQuery] = useState<string>('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(searchQuery.trim()), 250);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  // Lightbox state for viewing full-size images
+  const [lightboxOpen, setLightboxOpen] = useState(false);
+  const [lightboxImages, setLightboxImages] = useState<string[]>([]);
+  const [lightboxIndex, setLightboxIndex] = useState<number>(0);
+
+  const openLightbox = (images: string[], idx: number) => {
+    setLightboxImages(images || []);
+    setLightboxIndex(idx || 0);
+    setLightboxOpen(true);
+  };
+  const closeLightbox = () => {
+    setLightboxOpen(false);
+    // keep images in memory briefly in case of animation (not implemented)
+  };
+  const nextLightbox = () => setLightboxIndex(i => (lightboxImages.length ? (i + 1) % lightboxImages.length : i));
+  const prevLightbox = () => setLightboxIndex(i => (lightboxImages.length ? (i - 1 + lightboxImages.length) % lightboxImages.length : i));
+
+  useEffect(() => {
+    if (!lightboxOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeLightbox();
+      if (e.key === 'ArrowRight') nextLightbox();
+      if (e.key === 'ArrowLeft') prevLightbox();
+    };
+    window.addEventListener('keydown', handler);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', handler); document.body.style.overflow = prevOverflow; };
+  }, [lightboxOpen, lightboxImages.length]);
+
+  const filteredItems = useMemo(() => {
+    if (!debouncedQuery) return inspectionItems;
+    const q = debouncedQuery.toLowerCase();
+    return inspectionItems.filter(it => (it.item || '').toLowerCase().includes(q));
+  }, [inspectionItems, debouncedQuery]);
+
+  const highlightMatch = (text: string, q: string) => {
+    if (!q) return text;
+    const qi = q.toLowerCase();
+    const ti = text.toLowerCase();
+    const idx = ti.indexOf(qi);
+    if (idx === -1) return text;
+    return (
+      <>
+        {text.slice(0, idx)}<mark className="bg-yellow-100">{text.slice(idx, idx + q.length)}</mark>{text.slice(idx + q.length)}
+      </>
+    );
+  };
 
   // Load saved items when resuming an inspection or when an existingInspection prop is provided
   useEffect(() => {
@@ -108,90 +167,119 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
 
     // If an existing inspection object is provided by parent, use it (normalize to ensure stable ids)
     if (existingInspection && Array.isArray(existingInspection.items) && existingInspection.items.length > 0) {
-      setInspectionItems(existingInspection.items.map((it: any) => normalizeItem(it)) as InspectionItem[]);
+      const mapped = existingInspection.items.map((it: any) => normalizeItem(it)) as InspectionItem[];
+      // If venue room defines an item order, enforce it
+      if (Array.isArray((room as any).items) && (room as any).items.length > 0) {
+        const order = (room as any).items.map((ri: any) => String(ri.itemId || ri.id || ri.name || ri.item));
+        mapped.sort((a, b) => {
+          const ai = order.indexOf(String(a.id));
+          const bi = order.indexOf(String(b.id));
+          if (ai === -1 && bi === -1) return 0;
+          if (ai === -1) return 1;
+          if (bi === -1) return -1;
+          return ai - bi;
+        });
+      }
+      setInspectionItems(mapped);
       return;
     }
 
     // Otherwise, if an inspectionId exists (resuming), fetch saved items for this inspection + room
     const loadSaved = async () => {
       if (!inspectionId) return;
-
-      // Also check the inspection metadata from the server to derive read-only status
+      setLoadingSaved(true);
       try {
-        const list = await getInspections();
-        if (Array.isArray(list)) {
-          const found = list.find((i: any) => (i.inspection_id || i.id) === inspectionId || i.id === inspectionId);
-          if (found) {
-            const s = (found.status || '') as string;
-            if (s && s.toString().toLowerCase() === 'completed') {
-              setServerReadOnly(true);
-            } else if ((found as any).completedAt || (found as any).completed_at) {
-              setServerReadOnly(true);
+        // Also check the inspection metadata from the server to derive read-only status
+        try {
+          const list = await getInspections();
+          if (Array.isArray(list)) {
+            const found = list.find((i: any) => (i.inspection_id || i.id) === inspectionId || i.id === inspectionId);
+            if (found) {
+              const s = (found.status || '') as string;
+              if (s && s.toString().toLowerCase() === 'completed') {
+                setServerReadOnly(true);
+              } else if ((found as any).completedAt || (found as any).completed_at) {
+                setServerReadOnly(true);
+              }
             }
           }
+        } catch (e) {
+          // ignore failures to fetch metadata - fallback behavior remains
+          // console.warn('Failed to fetch inspections metadata for read-only check', e);
         }
-      } catch (e) {
-        // ignore failures to fetch metadata - fallback behavior remains
-        // console.warn('Failed to fetch inspections metadata for read-only check', e);
-      }
 
-      try {
-        let items = await getInspectionItems(inspectionId);
-        if (!items) return;
-        items = (items as any[]).filter((it) => String(it.roomId || it.room_id || it.room || '') === String(room.id));
-        // Filter out meta rows / non-item rows that lack an identifier
-        items = items.filter((it: any) => (it.itemId || it.item || it.ItemId || it.id));
-        if (items && items.length > 0) {
-          const mapped = items.map((it: any) => mapDbItem(it));
-          setInspectionItems(mapped);
-
-          // Also fetch registered images metadata for this inspection + room from the DB
-          (async () => {
-            try {
-              const resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/list-images-db', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ inspectionId: inspectionId, roomId: room.id })
+        try {
+          let items = await getInspectionItems(inspectionId);
+          if (!items) return;
+          items = (items as any[]).filter((it) => String(it.roomId || it.room_id || it.room || '') === String(room.id));
+          // Filter out meta rows / non-item rows that lack an identifier
+          items = items.filter((it: any) => (it.itemId || it.item || it.ItemId || it.id));
+          if (items && items.length > 0) {
+            let mapped = items.map((it: any) => mapDbItem(it));
+            // enforce venue room item order when available
+            if (Array.isArray((room as any).items) && (room as any).items.length > 0) {
+              const order = (room as any).items.map((ri: any) => String(ri.itemId || ri.id || ri.name || ri.item));
+              mapped.sort((a: any, b: any) => {
+                const ai = order.indexOf(String(a.id));
+                const bi = order.indexOf(String(b.id));
+                if (ai === -1 && bi === -1) return 0;
+                if (ai === -1) return 1;
+                if (bi === -1) return -1;
+                return ai - bi;
               });
-              if (!resp.ok) {
-                console.warn('Failed to fetch images from DB:', resp.status);
-                return;
-              }
-              const data = await resp.json();
-              const images: any[] = data.images || [];
-              if (images.length === 0) return;
-
-              // Merge images into corresponding items by itemId
-              setInspectionItems((prev) => {
-                return prev.map((it) => {
-                  const existing = it.photos || [];
-                  const imgsForItem = images.filter((img) => String(img.itemId) === String(it.id));
-                  const newPhotos = imgsForItem.map((img) => ({
-                    id: 's3_' + ((img.s3Key || img.publicUrl || img.filename) || '').replace(/[^a-zA-Z0-9_-]/g, '_'),
-                    imageId: img.imageId || null,
-                    s3Key: img.s3Key,
-                    preview: img.publicUrl, // public S3 URL
-                    filename: img.filename,
-                    contentType: img.contentType,
-                    filesize: img.filesize,
-                    uploadedAt: img.uploadedAt,
-                    uploadedBy: img.uploadedBy,
-                    status: 'uploaded'
-                  }));
-
-                  const existingKeys = new Set(existing.map((p: any) => p.s3Key || p.preview || p.filename));
-                  const deduped = newPhotos.filter((p) => !existingKeys.has(p.s3Key || p.preview || p.filename));
-
-                  return { ...it, photos: [...existing, ...deduped] };
-                });
-              });
-            } catch (e) {
-              console.warn('Error fetching images from DB:', e);
             }
-          })();
+            setInspectionItems(mapped);
+
+            // Also fetch registered images metadata for this inspection + room from the DB
+            (async () => {
+              try {
+                const resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/list-images-db', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ inspectionId: inspectionId, roomId: room.id })
+                });
+                if (!resp.ok) {
+                  console.warn('Failed to fetch images from DB:', resp.status);
+                  return;
+                }
+                const data = await resp.json();
+                const images: any[] = data.images || [];
+                if (images.length === 0) return;
+
+                // Merge images into corresponding items by itemId
+                setInspectionItems((prev) => {
+                  return prev.map((it) => {
+                    const existing = it.photos || [];
+                    const imgsForItem = images.filter((img) => String(img.itemId) === String(it.id));
+                    const newPhotos = imgsForItem.map((img) => ({
+                      id: 's3_' + ((img.s3Key || img.publicUrl || img.filename) || '').replace(/[^a-zA-Z0-9_-]/g, '_'),
+                      imageId: img.imageId || null,
+                      s3Key: img.s3Key,
+                      preview: img.publicUrl, // public S3 URL
+                      filename: img.filename,
+                      contentType: img.contentType,
+                      filesize: img.filesize,
+                      uploadedAt: img.uploadedAt,
+                      uploadedBy: img.uploadedBy,
+                      status: 'uploaded'
+                    }));
+
+                    const existingKeys = new Set(existing.map((p: any) => p.s3Key || p.preview || p.filename));
+                    const deduped = newPhotos.filter((p) => !existingKeys.has(p.s3Key || p.preview || p.filename));
+
+                    return { ...it, photos: [...existing, ...deduped] };
+                  });
+                });
+              } catch (e) {
+                console.warn('Error fetching images from DB:', e);
+              }
+            })();
+          }
+        } catch (e) {
+          console.warn('Failed to load saved inspection items:', e);
         }
-      } catch (e) {
-        console.warn('Failed to load saved inspection items:', e);
+      } finally {
+        setLoadingSaved(false);
       }
     };
 
@@ -380,10 +468,12 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
   const passCount = inspectionItems.filter((item) => item.status === 'pass').length;
   const failCount = inspectionItems.filter((item) => item.status === 'fail').length;
 
+  const isBusy = saving || loadingSaved;
+
   // Items no longer have categories; render a flat list
 
   const handlePhotoUpload = (id: string, file: File) => {
-    if (isReadOnly) return; // No uploads in read-only mode
+    if (isReadOnly || saving || loadingSaved) return; // No uploads in read-only or while busy
     // Accept file and create a preview; actual upload will occur on Save
     const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
     if (file.size > MAX_BYTES) {
@@ -496,6 +586,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
 
   return (
     <div className="min-h-screen bg-white pb-24 lg:pb-32">
+      <LoadingOverlay visible={saving || loadingSaved} message={loadingSaved ? 'Loading…' : 'Saving…'} />
       <div className="max-w-5xl mx-auto">
         {/* Header */}
         <div className="bg-blue-600 text-white p-6 lg:p-8 pb-8 lg:pb-10 sticky top-0 z-10">
@@ -544,15 +635,44 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
 
         {/* Inspection Items */}
         <div className="p-4">
-          {inspectionItems.map((item) => (
+          {/* Search bar */}
+          <div className="mb-4">
+            <label htmlFor="item-search" className="sr-only">Search items</label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Search className="w-4 h-4 text-gray-400" />
+              </div>
+              <input
+                id="item-search"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search items…"
+                className="w-full pl-10 pr-10 py-2 border border-gray-200 rounded-lg text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
+                aria-label="Search inspection items"
+              />
+              {searchQuery && (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery('')}
+                  aria-label="Clear search"
+                  className="absolute inset-y-0 right-0 pr-2 flex items-center text-gray-500"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            <div className="text-xs text-gray-500 mt-1">{filteredItems.length} of {inspectionItems.length} items</div>
+          </div>
+
+          {filteredItems.map((item) => (
                     <div key={item.id} className="border border-gray-200 rounded-lg p-4 mb-4">
-                      <p className="text-gray-900 mb-3">{item.item}</p>
+                      <p className="text-gray-900 mb-3">{debouncedQuery ? highlightMatch(item.item || '', debouncedQuery) : item.item}</p>
 
                       {/* Status Buttons */}
                       <div className="flex gap-2 mb-3">
                         <button
-                        onClick={() => { if (!isReadOnly) updateItem(item.id, { status: 'pass' }); }}
-                        disabled={isReadOnly}
+                        onClick={() => { if (!isReadOnly && !isBusy) updateItem(item.id, { status: 'pass' }); }}
+                        disabled={isReadOnly || isBusy}
                         className={`flex-1 py-2 px-3 rounded-lg border transition-colors flex items-center justify-center gap-2 ${
                           item.status === 'pass'
                             ? 'bg-green-500 text-white border-green-600'
@@ -563,8 +683,8 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                           <span>Pass</span>
                         </button>
                         <button
-                          onClick={() => { if (!isReadOnly) updateItem(item.id, { status: 'fail' }); }}
-                          disabled={isReadOnly}
+                          onClick={() => { if (!isReadOnly && !isBusy) updateItem(item.id, { status: 'fail' }); }}
+                          disabled={isReadOnly || isBusy}
                           className={`flex-1 py-2 px-3 rounded-lg border transition-colors flex items-center justify-center gap-2 ${
                             item.status === 'fail'
                               ? 'bg-red-500 text-white border-red-600'
@@ -575,8 +695,8 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                           <span>Fail</span>
                         </button>
                         <button
-                          onClick={() => { if (!isReadOnly) updateItem(item.id, { status: 'na' }); }}
-                          disabled={isReadOnly}
+                          onClick={() => { if (!isReadOnly && !isBusy) updateItem(item.id, { status: 'na' }); }}
+                          disabled={isReadOnly || isBusy}
                           className={`flex-1 py-2 px-3 rounded-lg border transition-colors flex items-center justify-center gap-2 ${
                             item.status === 'na'
                               ? 'bg-gray-500 text-white border-gray-600'
@@ -595,7 +715,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                         placeholder="Add notes (optional)"
                         className={`w-full p-2 border border-gray-300 rounded text-sm resize-none ${isReadOnly ? 'bg-gray-100 text-gray-600' : 'focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900'}`}
                         rows={2}
-                        readOnly={isReadOnly}
+                        readOnly={isReadOnly || isBusy}
                       />
 
                       {/* Photo Upload */}
@@ -610,21 +730,30 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                           <div className="grid grid-cols-3 gap-2 mb-2">
                             {item.photos.map((photo: any, photoIndex: number) => {
                               const src = typeof photo === 'string' ? photo : (photo.preview || photo.previewUrl || '');
+                              const photoKey = photo?.imageId ? `img_${photo.imageId}` : (photo?.id ? `img_${photo.id}` : `img_${photoIndex}`);
                               return (
-                                <div key={photo.id ?? photoIndex} className="relative group">
+                                <div key={photoKey} className="relative group">
                                   <img
                                     src={src}
                                     alt={`Evidence ${photoIndex + 1}`}
                                     width={80}
                                     height={80}
-                                    className="w-full h-20 object-cover rounded border border-gray-300"
+                                    onClick={() => {
+                                      const imgs = (item.photos || []).map((p: any) => (typeof p === 'string' ? p : (p.preview || p.previewUrl || p.publicUrl || '')));
+                                      openLightbox(imgs, photoIndex);
+                                    }}
+                                    role="button"
+                                    tabIndex={0}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { const imgs = (item.photos || []).map((p: any) => (typeof p === 'string' ? p : (p.preview || p.previewUrl || p.publicUrl || ''))); openLightbox(imgs, photoIndex); } }}
+                                    className="cursor-pointer w-full h-20 object-contain object-center rounded border border-gray-300 bg-gray-100 p-0.5"
                                   />
                                   {!isReadOnly && (
                                     <button
                                       type="button"
                                       aria-label="Remove photo"
                                       onClick={() => removePhoto(item.id, photoIndex)}
-                                      className="absolute top-2 right-2 bg-red-600 text-white rounded-full p-2 shadow-md focus:outline-none touch-manipulation"
+                                      disabled={isReadOnly || isBusy}
+                                      className="absolute top-2 right-2 bg-red-600 text-white rounded-full p-2 shadow-md focus:outline-none touch-manipulation disabled:opacity-60 disabled:cursor-not-allowed"
                                     >
                                       <X className="w-3 h-3" />
                                     </button>
@@ -636,7 +765,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                         )}
                         
                         {/* Upload Button (hidden in read-only) */}
-                        {!isReadOnly && (
+                        {!isReadOnly && !isBusy && (
                           <div className="flex items-center gap-2">
                             {/* Take Photo (camera capture) */}
                             <label className={`flex items-center justify-center gap-2 py-2 px-3 border-2 border-dashed border-gray-300 rounded-lg ${isReadOnly ? 'opacity-70 cursor-not-allowed' : 'hover:border-blue-500 hover:bg-blue-50'} transition-colors cursor-pointer text-sm text-gray-600`}>
@@ -688,7 +817,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
           <div className="fixed bottom-0 left-0 right-0 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] bg-white border-t max-w-md mx-auto">
             <button
               onClick={handleSubmit}
-              disabled={completedCount === 0 || saving}
+              disabled={completedCount === 0 || isBusy}
               className={`w-full py-3 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors ${
                 completedCount === 0
                   ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
@@ -703,6 +832,38 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
 
 
       </div>
+
+      {/* Lightbox Modal */}
+      {lightboxOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => closeLightbox()}
+        >
+          <div className="absolute top-4 right-4">
+            <button onClick={() => closeLightbox()} aria-label="Close image" className="p-2 text-white bg-black bg-opacity-20 rounded">
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="absolute left-4">
+            <button onClick={(e) => { e.stopPropagation(); prevLightbox(); }} aria-label="Previous image" className="p-2 text-white bg-black bg-opacity-20 rounded">
+              <ChevronLeft className="w-6 h-6" />
+            </button>
+          </div>
+
+          <div className="relative max-w-[90vw] max-h-[90vh] p-4" onClick={(e) => e.stopPropagation()}>
+            <img src={lightboxImages[lightboxIndex]} alt={`Image ${lightboxIndex + 1}`} className="max-w-full max-h-[80vh] object-contain rounded shadow-lg bg-white" />
+          </div>
+
+          <div className="absolute right-4">
+            <button onClick={(e) => { e.stopPropagation(); nextLightbox(); }} aria-label="Next image" className="p-2 text-white bg-black bg-opacity-20 rounded">
+              <ChevronRight className="w-6 h-6" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

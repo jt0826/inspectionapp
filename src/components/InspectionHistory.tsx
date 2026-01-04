@@ -5,7 +5,6 @@ import FadeInText from './FadeInText';
 import FadeIn from 'react-fade-in';
 import { Inspection } from '../App';
 import { getInspectionsPartitioned } from '../utils/inspectionApi';
-import { computeTotalsFromInspection } from '../utils/inspectionHelpers';
 import InspectionCard from './InspectionCard';
 
 interface InspectionHistoryProps {
@@ -37,44 +36,29 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection, onR
 
 
 
-  // Prefer server-provided inspections from a single list_inspections call
+  // Use server-provided inspections from the consolidated query endpoint
   const [sourceInspections, setSourceInspections] = useState<any[]>([]);
-  const [serverProvidedCompleted, setServerProvidedCompleted] = useState<boolean>(false);
-
-  const pick = (rec: Record<string, unknown> | null | undefined, ...keys: string[]) => {
-    if (!rec) return '';
-    for (const k of keys) {
-      const v = (rec as any)[k];
-      if (v !== undefined && v !== null && v !== '') return String(v);
-    }
-    return '';
-  };
 
   useEffect(() => {
     let cancelled = false;
     const fetchList = async () => {
       try {
-        const body = await getInspectionsPartitioned();
+        // Request all completed inspections (completedLimit <= 0 => no limit)
+        const body = await getInspectionsPartitioned({ completedLimit: 0 });
         if (cancelled) return;
 
-        // If server provided a completed partition, prefer that as the source list to display
+        // Prefer server-supplied 'completed' partition; otherwise use the canonical 'inspections' list
         if (body && Array.isArray(body.completed) && body.completed.length > 0) {
-          setSourceInspections(body.completed);
-          setServerProvidedCompleted(true);
+          setSourceInspections(body.completed as any[]);
         } else if (body && Array.isArray(body.inspections) && body.inspections.length > 0) {
-          // fallback: use inspections array and filter by status === 'completed' below
           setSourceInspections(body.inspections as any[]);
-          setServerProvidedCompleted(false);
         } else {
-          // Last resort: call legacy getInspections (returns array)
-          const items = await import('../utils/inspectionApi').then(m => m.getInspections());
-          setSourceInspections(items || []);
-          setServerProvidedCompleted(false);
+          // No data returned from the canonical endpoint
+          setSourceInspections([]);
         }
       } catch (e) {
         console.warn('Failed to fetch inspections for history', e);
         setSourceInspections([]);
-        setServerProvidedCompleted(false);
       }
     };
 
@@ -91,12 +75,10 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection, onR
   // Use sourceInspections if present, otherwise use the parent inspections prop
   const effectiveInspections: any[] = (sourceInspections && sourceInspections.length > 0) ? sourceInspections : inspections;
 
-  // We rely on server-side partitioning or the inspection's status to determine completed inspections.
-  // No per-inspection network calls are made here to keep history loading to a single API request.
+  // No extra completeness checking or legacy fallbacks — the server should provide completed/inspections partitions.
   const [checkingComplete, setCheckingComplete] = useState(false);
 
   useEffect(() => {
-    // If sourceInspections came from the server's 'completed' partition, we are already showing completed rows. Otherwise, we may need to filter by status below.
     setCheckingComplete(false);
   }, [sourceInspections]);
 
@@ -104,35 +86,45 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection, onR
   const normalize = (rec: any) => {
     if (!rec) return null as any;
 
-    // If the server already returned totals, prefer them. If not, use computeTotalsFromInspection as a fallback.
-    const totals = (rec.totals && typeof rec.totals === 'object') ? rec.totals : computeTotalsFromInspection(rec);
+    // Map canonical fields from the monolithic JSON returned by inspections-query
+    const id = String(rec.id || rec.inspection_id || '');
+    const venueName = String(rec.venueName || rec.venue_name || rec.venue || '');
+    const roomName = String(rec.roomName || rec.room_name || rec.room || '');
+    const inspectorName = String(rec.inspectorName || rec.createdBy || rec.created_by || rec.inspector_name || '');
 
-    // Some older records may use lastUpdated/lastUpdatedBy instead of updatedAt/updatedBy - prefer the latter but fall back to lastUpdated
-    const updatedAt = rec.updatedAt || rec.lastUpdated || pick(rec, 'lastUpdatedAt', 'lastUpdated') || '';
-    const updatedBy = rec.updatedBy || pick(rec, 'lastUpdatedBy', 'lastUpdatedByName', 'updated_by') || '';
+    // Prefer explicit timestamps from the server
+    const updatedAt = rec.updatedAt || '';
+    const completedAt = (rec.completedAt || rec.completed_at || rec.completedTimestamp) || '';
+    const timestamp = rec.timestamp || rec.createdAt || rec.created_at || rec.updatedAt || '';
 
-    // Determine completedAt for completed variants: server may return 'completedAt', 'completed_at', or 'completedTimestamp' or the record may have 'updatedAt' which equals completion time.
-    const completedAt = pick(rec, 'completedAt', 'completed_at', 'completedTimestamp') || updatedAt || '';
+    // Totals should be provided by the server; default to zeros but warn if missing
+    const totals = (rec.totals && typeof rec.totals === 'object') ? { pass: rec.totals.pass ?? 0, fail: rec.totals.fail ?? 0, na: rec.totals.na ?? 0, total: rec.totals.total ?? 0 } : { pass: 0, fail: 0, na: 0, total: 0 };
+    if (!rec.totals) console.warn(`Inspection ${id} missing totals in server payload`);
+    if (!completedAt) console.warn(`Inspection ${id} missing completedAt in server payload`);
+
+    const items = Array.isArray(rec.items) ? rec.items : [];
 
     return {
       ...rec,
-      totals,
+      id,
+      venueName,
+      roomName,
+      inspectorName,
       updatedAt,
-      updatedBy,
       completedAt,
+      timestamp,
+      totals,
+      items,
     };
   };
 
   const normalizedInspections = effectiveInspections.map(normalize).filter(Boolean);
 
   // History should show only completed inspections (based on status, items, or server check)
-  // Determine completed inspections from the server-supplied list or fallback to status field
+  // Show only inspections with explicit completed status (server should provide completed partition when possible)
   const completedInspections = normalizedInspections.filter((inspection: any) => {
     const status = String(inspection.status || inspection.state || '').toLowerCase();
-    if (status === 'completed') return true;
-    // If the server provided a completed partition then effectiveInspections already contains only completed ones
-    // Otherwise, we fall back to the status check above
-    return false;
+    return status === 'completed';
   });
 
   const handleDelete = async (inspectionId: string) => {
@@ -172,30 +164,29 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection, onR
     return true;
   });
 
-  // Sort by most recent first (defensive timestamp handling)
+  // Sort by most recent first using canonical completedAt/timestamp
   const sortedInspections = [...filteredInspections].sort((a: any, b: any) => {
-    const aTs = String(a.completedAt || a.completed_at || a.timestamp || a.created_at || a.createdAt || a.updatedAt || a.updated_at || '');
-    const bTs = String(b.completedAt || b.completed_at || b.timestamp || b.created_at || b.createdAt || b.updatedAt || b.updated_at || '');
+    const aTs = String(a.completedAt || a.timestamp || a.updatedAt || '');
+    const bTs = String(b.completedAt || b.timestamp || b.updatedAt || '');
     return new Date(bTs).getTime() - new Date(aTs).getTime();
   });
 
   // Render list using normalized field access
   const renderInspectionItem = (inspection: any, idx: number) => {
     const id = String(inspection.id || inspection.inspection_id || '');
-    const rawItems = (inspection.items || []) as any[];
-    const items = rawItems.filter((it) => it && (it.itemId || it.id || it.item || it.ItemId));
+    const items = (inspection.items || []) as any[];
 
-    // Prefer server-provided totals when available
-    const passedItems = inspection.totals && typeof inspection.totals.pass === 'number' ? inspection.totals.pass : items.filter((i) => String(i?.status || '').toLowerCase() === 'pass').length;
-    const failedItems = inspection.totals && typeof inspection.totals.fail === 'number' ? inspection.totals.fail : items.filter((i) => String(i?.status || '').toLowerCase() === 'fail').length;
-    const naItems = inspection.totals && typeof inspection.totals.na === 'number' ? inspection.totals.na : items.filter((i) => String(i?.status || '').toLowerCase() === 'na').length;
-    const totalItems = inspection.totals && typeof inspection.totals.total === 'number' ? inspection.totals.total : items.length;
+    // Use server-provided totals only (normalize ensures defaults)
+    const passedItems = inspection.totals.pass ?? 0;
+    const failedItems = inspection.totals.fail ?? 0;
+    const naItems = inspection.totals.na ?? 0;
+    const totalItems = inspection.totals.total ?? (passedItems + failedItems + naItems);
     const hasIssues = failedItems > 0;
 
-    const venueName = String(inspection.venueName || inspection.venue_name || inspection.venue || '');
-    const roomName = String(inspection.roomName || inspection.room_name || inspection.room || '');
-    const inspectorName = String(inspection.inspectorName || inspection.created_by || inspection.inspector_name || inspection.createdBy || '');
-    const timestamp = String(inspection.timestamp || inspection.created_at || inspection.createdAt || inspection.updatedAt || '');
+    const venueName = String(inspection.venueName || '');
+    const roomName = String(inspection.roomName || '');
+    const inspectorName = String(inspection.inspectorName || inspection.createdBy || inspection.created_by || '');
+    const timestamp = String(inspection.timestamp || inspection.completedAt || inspection.createdAt || '');
 
     return (
       <div
