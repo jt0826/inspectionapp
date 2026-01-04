@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { ArrowLeft, CheckCircle2, XCircle, MinusCircle, Save, Camera, X, Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { ArrowLeft, CheckCircle2, XCircle, MinusCircle, Save, Camera, X, Search, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
 import { Venue, Room, InspectionItem, Inspection } from '../App';
 import { useAuth } from '../contexts/AuthContext';
 import { getInspectionItems, getInspections } from '../utils/inspectionApi';
@@ -390,6 +390,8 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
       return;
     }
 
+    const inspectionStatus = completedCount === inspectionItems.length ? 'completed' : 'in_progress';
+
     const inspectionToSubmit: Inspection = {
       id: inspId,
       venueId: venue.id,
@@ -398,7 +400,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
       roomName: room.name,
       inspectorName: user?.name || 'Unknown',
       items: inspectionItems,
-      status: 'completed',
+      status: inspectionStatus as any,
     };
 
     // send to backend (no photos)
@@ -470,6 +472,8 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
   const completedCount = inspectionItems.filter((item) => item.status !== 'pending').length;
   const passCount = inspectionItems.filter((item) => item.status === 'pass').length;
   const failCount = inspectionItems.filter((item) => item.status === 'fail').length;
+  const naCount = inspectionItems.filter((item) => item.status === 'na').length;
+  const pendingCount = inspectionItems.filter((item) => item.status === 'pending').length;
 
   const isBusy = saving || loadingSaved;
 
@@ -633,6 +637,14 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
               <XCircle className="w-4 h-4 text-red-600" />
               <span className="text-gray-700">Fail: {failCount}</span>
             </div>
+            <div className="flex items-center gap-2">
+              <MinusCircle className="w-4 h-4 text-gray-600" />
+              <span className="text-gray-700">N/A: {naCount}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-yellow-600" />
+              <span className="text-gray-500 text-sm">Pending: {pendingCount}</span>
+            </div>
           </div>
         </div>
 
@@ -669,7 +681,10 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
 
           {filteredItems.map((item) => (
                     <div key={item.id} className="border border-gray-200 rounded-lg p-4 mb-4">
-                      <p className="text-gray-900 mb-3">{debouncedQuery ? highlightMatch(item.item || '', debouncedQuery) : item.item}</p>
+                      <div className="flex items-center justify-between mb-3">
+                        <p className="text-gray-900 mr-2">{debouncedQuery ? highlightMatch(item.item || '', debouncedQuery) : item.item}</p>
+                        {item.status === 'pending' && <span className="text-xs text-gray-500">Pending</span>}
+                      </div>
 
                       {/* Status Buttons */}
                       <div className="flex gap-2 mb-3">
