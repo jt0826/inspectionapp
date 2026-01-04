@@ -15,6 +15,7 @@ create_venue.py
 delete_inspection.py
     old: https://cj1nbczcqk.execute-api.ap-southeast-1.amazonaws.com/dev
     new: https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-delete
+    NOTE: Now supports `cascade: true` in the body to remove associated S3 objects and image metadata before deleting the inspection. Response includes `summary` with `deletedImages` and `imageFailures`.
 
 get_inspection.py
     old: https://9d812k40eb.execute-api.ap-southeast-1.amazonaws.com/dev

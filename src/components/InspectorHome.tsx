@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { ClipboardCheck, Plus, History, User, Building2, LogOut, Clock, AlertCircle, CheckCircle2, XCircle, MinusCircle, Trash2 } from 'lucide-react';
+import { ClipboardCheck, Plus, History, User, Building2, LogOut, Clock, AlertCircle, CheckCircle2, XCircle, MinusCircle, Trash2, Grid } from 'lucide-react';
 import { Inspection } from '../App';
 import NumberFlow from '@number-flow/react';
 import FadeInText from './FadeInText';
@@ -21,6 +21,7 @@ interface InspectorHomeProps {
   onViewProfile: () => void;
   onManageVenues: () => void;
   onDeleteInspection: (inspectionId: string) => void;
+  onViewDashboard?: () => void;
 }
 
 export function InspectorHome({
@@ -32,6 +33,7 @@ export function InspectorHome({
   onViewProfile,
   onManageVenues,
   onDeleteInspection,
+  onViewDashboard,
 }: InspectorHomeProps) {
   const { user, logout } = useAuth();
   const propsVenues = venues || [];
@@ -335,23 +337,27 @@ export function InspectorHome({
   const handleDeleteInspection = async (e: React.MouseEvent, inspection: Record<string, unknown>) => {
     e.stopPropagation();
     const id = String(inspection['id'] || inspection['inspection_id'] || '');
-    const confirmed = await confirm({
-      title: 'Delete inspection',
-      message: `Are you sure you want to delete the inspection for ${inspection.venueName || id}?`,
-      confirmLabel: 'Delete',
-      cancelLabel: 'Cancel',
-    });
-    if (!confirmed) return;
-
-    setDeleting(true);
-    setDeletingIds(prev => [...prev, id]);
 
     try {
-      const token = localStorage.getItem('authToken') || '';
+      const { listImagesForInspection, deleteInspection } = await import('../utils/inspectionApi');
+      const images = await listImagesForInspection(id);
+      const imageCount = (images && images.length) || 0;
 
-      // Use centralized helper
-      const { deleteInspection } = await import('../utils/inspectionApi');
-      const result = await deleteInspection(id, token);
+      const confirmed = await confirm({
+        title: 'Delete inspection',
+        message: `Are you sure you want to delete the inspection for ${inspection.venueName || id}? This will also delete ${imageCount} uploaded image${imageCount !== 1 ? 's' : ''}.`,
+        confirmLabel: 'Delete',
+        cancelLabel: 'Cancel',
+      });
+      if (!confirmed) return;
+
+      setDeleting(true);
+      setDeletingIds(prev => [...prev, id]);
+
+      show('Deleting inspection and images…', { variant: 'info' });
+
+      const token = localStorage.getItem('authToken') || '';
+      const result = await deleteInspection(id, { cascade: true }, token);
 
       if (!result || !result.ok) {
         console.error('Failed to delete inspection', result);
@@ -359,21 +365,17 @@ export function InspectorHome({
         return;
       }
 
-      const data = result.data;
-      const deleted = data && (data.deleted || 0);
-      const remaining = data && (data.remaining || 0);
+      const summary = result.summary || (result.data && result.data.summary) || null;
+      const deletedImages = (summary && summary.deletedImages) || 0;
+      const imageFailures = (summary && summary.imageFailures) || [];
 
-      if (deleted && deleted > 0) {
-        setDynamoInspections(prev => prev.filter(item => item.inspection_id !== id));
-        onDeleteInspection(id);
-        show('Inspection deleted', { variant: 'success' });
-      } else if (data && (data.inspectionDataDeleted || data.metaDeleted)) {
-        show('Inspection metadata removed', { variant: 'success' });
-        setDynamoInspections(prev => prev.filter(item => item.inspection_id !== id));
-        onDeleteInspection(id);
+      setDynamoInspections(prev => prev.filter(item => item.inspection_id !== id));
+      onDeleteInspection(id);
+
+      if (imageFailures.length > 0) {
+        show(`Inspection deleted but ${deletedImages} images removed; ${imageFailures.length} image deletions failed. Check console.`, { variant: 'info' });
       } else {
-        console.warn('Delete returned no deletions', data);
-        show('Delete completed but no inspection rows were removed', { variant: 'error' });
+        show(`Inspection deleted (${deletedImages} images removed)`, { variant: 'success' });
       }
 
       try { await fetchInspections(); } catch (refreshErr) { console.warn('Failed to refresh inspections after delete', refreshErr); }
@@ -399,13 +401,24 @@ export function InspectorHome({
                 <p className="text-blue-100 text-sm lg:text-base">Welcome, {user?.name}</p>
               </div>
             </div>
-            <button
-              onClick={logout}
-              className="p-2 lg:p-3 text-blue-100 hover:text-white hover:bg-blue-700 rounded-lg transition-colors"
-              title="Logout"
-            >
-              <LogOut className="w-5 h-5 lg:w-6 lg:h-6" />
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => onViewDashboard && onViewDashboard()}
+                className="p-2 lg:p-3 text-blue-100 hover:text-white hover:bg-blue-700 rounded-lg transition-colors"
+                title="Dashboard"
+                aria-label="Open dashboard"
+              >
+                <Grid className="w-5 h-5 lg:w-6 lg:h-6" />
+              </button>
+
+              <button
+                onClick={logout}
+                className="p-2 lg:p-3 text-blue-100 hover:text-white hover:bg-blue-700 rounded-lg transition-colors"
+                title="Logout"
+              >
+                <LogOut className="w-5 h-5 lg:w-6 lg:h-6" />
+              </button>
+            </div>
           </div>
 
           {/* User Profile Card */}

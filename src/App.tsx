@@ -13,6 +13,9 @@ import { getInspectionItems } from './utils/inspectionApi';
 import { VenueSelection } from './components/VenueSelection';
 import { InspectionConfirmation } from './components/InspectionConfirmation';
 import { VenueLayout } from './components/VenueLayout';
+import { Dashboard } from './components/Dashboard';
+import { useToast } from './components/ToastProvider';
+import { getVenueById } from './utils/venueApi';
 
 export interface Venue {
   id: string;
@@ -121,7 +124,8 @@ type View =
   | 'history'
   | 'selectVenue'
   | 'confirmInspection'
-  | 'venueLayout';
+  | 'venueLayout'
+  | 'dashboard';
 
 function AppContent() {
   const { isAuthenticated, user } = useAuth();
@@ -336,22 +340,23 @@ function AppContent() {
     setCurrentInspectionId(id);
     setIsCreatingNewInspection(false);
 
-    // Set the selected venue so UI reflects the created inspection's venue
+    // Set the venue context so UI can show confirmation. Prefer local venue; otherwise mark pendingVenueId
     const vid = simpleInspection.venueId;
     if (vid) {
       const v = venues.find(x => x.id === vid);
       if (v) {
         setSelectedVenue(v);
-        setCurrentView('confirmInspection');
-        return;
+      } else {
+        // Venue not found locally: set pendingVenueId so the confirmation screen can fetch it from the server
+        setPendingVenueId(vid);
+        setSelectedVenue(null);
       }
-
-      // Venue not found locally: set pendingVenueId and continue to confirm screen. VenueList will fetch venues when opened.
-      setPendingVenueId(vid);
-      setCurrentView('confirmInspection');
     } else {
-      setCurrentView('confirmInspection');
+      // No venue information available: clear selection and let confirmation handle it
+      setSelectedVenue(null);
+      setPendingVenueId(null);
     }
+    setCurrentView('confirmInspection');
   };
   const fetchInspectionItems = async (inspectionId: string, roomId?: string) => {
     try {
@@ -506,6 +511,8 @@ function AppContent() {
     }
   };
 
+  const { show, confirm } = useToast();
+
   const handleViewHistory = () => {
     setCurrentView('history');
   };
@@ -528,8 +535,36 @@ function AppContent() {
   };
 
   const handleDeleteVenue = async (venueId: string) => {
-    // Optimistic UI update
+    // Determine inspections to delete and attempt a cascading delete of images first
     const originalVenues = venues;
+    const originalInspections = inspections;
+
+    const toDeleteInspections = inspections.filter((i) => i.venueId === venueId).map(i => i.id);
+    try {
+      if (toDeleteInspections.length > 0) {
+        show('Deleting associated inspection images…', { variant: 'info' });
+        const { deleteInspection } = await import('./utils/inspectionApi');
+        const promises = toDeleteInspections.map((iid) => deleteInspection(iid, { cascade: true }));
+        const settled = await Promise.allSettled(promises);
+        let totalImagesDeleted = 0;
+        const failures: any[] = [];
+        settled.forEach((s: any) => {
+          if (s.status === 'fulfilled' && s.value && s.value.ok) totalImagesDeleted += (s.value.summary?.deletedImages || 0);
+          else failures.push(s.reason || s.value);
+        });
+        if (failures.length > 0) {
+          console.warn('Some cascading deletes failed:', failures);
+          show('Some images failed to delete. Venue delete will proceed; check console for details.', { variant: 'info' });
+        } else {
+          show(`Deleted ${totalImagesDeleted} images for this venue`, { variant: 'success' });
+        }
+      }
+    } catch (e) {
+      console.warn('Cascading delete images failed', e);
+      show('Failed to delete some images for this venue; continuing with venue delete', { variant: 'info' });
+    }
+
+    // Optimistic UI update for venue and inspections
     setVenues(venues.filter((v) => v.id !== venueId));
     setInspections(inspections.filter((i) => i.venueId !== venueId));
 
@@ -545,6 +580,7 @@ function AppContent() {
         console.error('Failed to delete venue:', res.status, text);
         // revert UI
         setVenues(originalVenues);
+        setInspections(originalInspections);
         alert('Failed to delete venue. See console for details.');
         return;
       }
@@ -554,10 +590,12 @@ function AppContent() {
       console.log('delete_venue response', data);
 
       // Server-side state already reflected via local update; VenueList will refresh when opened if needed.
+      return true;
     } catch (err) {
       console.error('Error deleting venue:', err);
       setVenues(originalVenues);
       alert('Error deleting venue. See console.');
+      return false;
     }
   };
 
@@ -639,7 +677,24 @@ function AppContent() {
     setCurrentView('profile');
   };
 
-  const handleConfirmInspection = () => {
+  const handleViewDashboard = () => {
+    setCurrentView('dashboard');
+  };
+
+  const handleConfirmInspection = async () => {
+    if (!selectedVenue && pendingVenueId) {
+      try {
+        const v = await getVenueById(String(pendingVenueId));
+        if (v) {
+          const mapped = { id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || new Date().toISOString(), updatedAt: v.updatedAt || v.createdAt || new Date().toISOString(), createdBy: v.createdBy || '' } as Venue;
+          setSelectedVenue(mapped);
+        }
+      } catch (e) {
+        console.warn('Failed to load venue before confirming inspection', e);
+      } finally {
+        setPendingVenueId(null);
+      }
+    }
     setCurrentView('rooms');
   };
 
@@ -665,6 +720,7 @@ function AppContent() {
           onViewHistory={handleViewHistory}
           onViewProfile={handleViewProfile}
           onManageVenues={() => setCurrentView('venues')}
+          onViewDashboard={handleViewDashboard}
           onDeleteInspection={handleDeleteInspectionById}
         />
       )}
@@ -680,9 +736,14 @@ function AppContent() {
         />
       )}
 
-      {currentView === 'confirmInspection' && selectedVenue && (
+      {currentView === 'dashboard' && (
+        <Dashboard onBack={() => setCurrentView('home')} />
+      )}
+
+      {currentView === 'confirmInspection' && (
         <InspectionConfirmation
-          venue={selectedVenue}
+          venue={selectedVenue ?? undefined}
+          pendingVenueId={pendingVenueId ?? undefined}
           onConfirm={handleConfirmInspection}
           onReturnHome={handleReturnHomeFromConfirm}
         />

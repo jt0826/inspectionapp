@@ -64,9 +64,27 @@ export function VenueList({
   const handleDeleteClick = async (e: React.MouseEvent, venue: Venue) => {
     e.stopPropagation();
     const count = inspectionsCount?.[venue.id] ?? 0;
+
+    // Compute number of uploaded images across all inspections for this venue (best-effort)
+    let totalImages = 0;
+    if (count > 0) {
+      try {
+        const { getInspections } = await import('../utils/inspectionApi');
+        const { listImagesForInspection } = await import('../utils/inspectionApi');
+        const allInsps = await getInspections();
+        const venueInsps = (allInsps || []).filter((ins: any) => String(ins.venueId || ins.venue_id || ins.venue) === String(venue.id));
+        for (const ins of venueInsps) {
+          const imgs = await listImagesForInspection(String(ins.inspection_id || ins.id));
+          totalImages += (imgs && imgs.length) || 0;
+        }
+      } catch (e) {
+        console.warn('Failed to compute image count for venue', e);
+      }
+    }
+
     const confirmed = await confirm({
       title: 'Delete venue',
-      message: `Are you sure you want to delete ${venue.name}?${count > 0 ? ' This will also delete ' + count + ' associated inspection' + (count !== 1 ? 's' : '') + '.' : ''}`,
+      message: `Are you sure you want to delete ${venue.name}?${count > 0 ? ' This will also delete ' + count + ' associated inspection' + (count !== 1 ? 's' : '') + (totalImages > 0 ? ' and ' + totalImages + ' uploaded image' + (totalImages !== 1 ? 's' : '') + '.' : '.') : ''}`,
       confirmLabel: 'Delete',
       cancelLabel: 'Cancel',
     });
@@ -77,6 +95,19 @@ export function VenueList({
       const success = await onDeleteVenue(venue.id) as any;
       if (success === true || success === undefined) {
         show(`${venue.name} deleted`, { variant: 'success' });
+
+        // Refresh venues from server to ensure list is authoritative
+        try {
+          const items = await getVenues();
+          const mapped = items.map((v: any) => ({ id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || new Date().toISOString(), updatedAt: v.updatedAt || v.createdAt || new Date().toISOString(), createdBy: v.createdBy || '' }));
+          setLocalVenues(mapped);
+          if (typeof onVenuesLoaded === 'function') onVenuesLoaded(mapped);
+          show('Venue list refreshed', { variant: 'success' });
+        } catch (e) {
+          console.warn('Failed to refresh venues after delete', e);
+          show('Venue deleted but failed to refresh list', { variant: 'info' });
+        }
+
       } else {
         show(`Failed to delete ${venue.name}`, { variant: 'error' });
       }
@@ -102,6 +133,21 @@ export function VenueList({
       hour: '2-digit',
       minute: '2-digit'
     });
+  };
+
+  // Defensive back handler: ensure click events don't get swallowed and that onBack exists before calling
+  const handleBackClick = (e: React.MouseEvent) => {
+    try {
+      e.preventDefault();
+      e.stopPropagation();
+    } catch (err) {
+      // ignore
+    }
+    if (typeof onBack === 'function') {
+      try { onBack(); } catch (err) { console.error('Error in onBack handler', err); }
+    } else {
+      console.warn('VenueList: onBack prop not provided');
+    }
   };
 
 
@@ -132,7 +178,7 @@ export function VenueList({
           </div>
 
           {/* Manage Venues header (replaces the user profile card) */}
-            <button onClick={onBack} className="flex items-center gap-2 text-blue-100 hover:text-white mb-4 lg:mb-6 text-sm lg:text-base">
+            <button type="button" onClick={handleBackClick} className="flex items-center gap-2 text-blue-100 hover:text-white mb-4 lg:mb-6 text-sm lg:text-base">
               <ArrowLeft className="w-4 h-4" />
               <span>Back to Home</span>
             </button>

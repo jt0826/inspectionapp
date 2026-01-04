@@ -35,13 +35,22 @@ const defaultInspectionItems: Omit<InspectionItem, 'status' | 'notes' | 'photos'
 
 const makePhotoId = () => 'ph_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,9);
 
+// Ensure any incoming item-like object is normalized to the InspectionItem shape
+const normalizeItem = (it: any): InspectionItem => ({
+  id: it.id || it.itemId || it.ItemId || ('item_' + Math.random().toString(36).substr(2, 9)),
+  item: it.itemName || it.item || it.ItemName || it.name || '',
+  status: (it.status || 'pending').toString().toLowerCase() as any,
+  photos: it.photos || [],
+  notes: it.comments || it.notes || ''
+});
+
 export function InspectionForm({ venue, room, onBack, onSubmit, existingInspection, inspectionId, readOnly = false }: InspectionFormProps) {
   const { user } = useAuth();
 
   const [inspectionItems, setInspectionItems] = useState<InspectionItem[]>(() => {
-    // If editing an existing inspection, use its items
+    // If editing an existing inspection, use its items (normalized to ensure stable ids)
     if (existingInspection && existingInspection.items.length > 0) {
-      return existingInspection.items;
+      return existingInspection.items.map((it: any) => normalizeItem(it));
     }
 
     // Prefer room items from the venue (coming from DB). Fall back to default list if none.
@@ -91,9 +100,9 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
       notes: it.comments || it.notes || ''
     });
 
-    // If an existing inspection object is provided by parent, use it
+    // If an existing inspection object is provided by parent, use it (normalize to ensure stable ids)
     if (existingInspection && Array.isArray(existingInspection.items) && existingInspection.items.length > 0) {
-      setInspectionItems(existingInspection.items as InspectionItem[]);
+      setInspectionItems(existingInspection.items.map((it: any) => normalizeItem(it)) as InspectionItem[]);
       return;
     }
 
@@ -592,23 +601,46 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                         
                         {/* Upload Button (hidden in read-only) */}
                         {!readOnly && (
-                          <label className="flex items-center justify-center gap-2 py-2 px-3 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors cursor-pointer text-sm text-gray-600">
-                            <Camera className="w-4 h-4" />
-                            <span>Take Photo / Upload</span>
-                            <input
-                              type="file"
-                              accept="image/*"
-                              capture="environment"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) {
-                                  handlePhotoUpload(item.id, file);
-                                  e.target.value = '';
-                                }
-                              }}
-                              className="hidden"
-                            />
-                          </label>
+                          <div className="flex items-center gap-2">
+                            {/* Take Photo (camera capture) */}
+                            <label className="flex items-center justify-center gap-2 py-2 px-3 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors cursor-pointer text-sm text-gray-600">
+                              <Camera className="w-4 h-4" />
+                              <span>Take Photo</span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                capture="environment"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    handlePhotoUpload(item.id, file);
+                                    e.target.value = '';
+                                  }
+                                }}
+                                className="hidden"
+                                aria-label={`Take photo for ${item.item}`}
+                              />
+                            </label>
+
+                            {/* Choose existing photo from library */}
+                            <label className="flex items-center justify-center gap-2 py-2 px-3 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors cursor-pointer text-sm text-gray-600">
+                              <Camera className="w-4 h-4" />
+                              <span>Choose from Library</span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    handlePhotoUpload(item.id, file);
+                                    e.target.value = '';
+                                  }
+                                }}
+                                className="hidden"
+                                aria-label={`Choose photo for ${item.item}`}
+                              />
+                            </label>
+                          </div>
                         )}
                       </div>
                     </div>
