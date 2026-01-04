@@ -45,6 +45,31 @@ const normalizeItem = (it: any): InspectionItem => ({
   notes: it.comments || it.notes || ''
 });
 
+// Enforce the room-defined item order on a list of items.
+const enforceRoomOrder = (items: InspectionItem[], room: Room) => {
+  if (!room || !Array.isArray((room as any).items) || (room as any).items.length === 0) return items;
+  // Build ordered lookup from room definition
+  const order: { ids: string[]; names: string[] }[] = (room as any).items.map((ri: any) => ({
+    ids: [ri.itemId, ri.id].filter(Boolean).map((v: any) => String(v)),
+    names: [ri.name, ri.item].filter(Boolean).map((v: any) => String(v).toLowerCase())
+  }));
+
+  return items.slice().sort((a, b) => {
+    const aKey = String(a.id || '');
+    const bKey = String(b.id || '');
+    const aName = String(a.item || '').toLowerCase();
+    const bName = String(b.item || '').toLowerCase();
+
+    const aIndex = order.findIndex((ok: { ids: string[]; names: string[] }) => ok.ids.includes(aKey) || (aName && ok.names.includes(aName)));
+    const bIndex = order.findIndex((ok: { ids: string[]; names: string[] }) => ok.ids.includes(bKey) || (bName && ok.names.includes(bName)));
+
+    if (aIndex === -1 && bIndex === -1) return 0;
+    if (aIndex === -1) return 1;
+    if (bIndex === -1) return -1;
+    return aIndex - bIndex;
+  });
+};
+
 export function InspectionForm({ venue, room, onBack, onSubmit, existingInspection, inspectionId, readOnly = false }: InspectionFormProps) {
   const { user } = useAuth();
 
@@ -167,19 +192,9 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
 
     // If an existing inspection object is provided by parent, use it (normalize to ensure stable ids)
     if (existingInspection && Array.isArray(existingInspection.items) && existingInspection.items.length > 0) {
-      const mapped = existingInspection.items.map((it: any) => normalizeItem(it)) as InspectionItem[];
-      // If venue room defines an item order, enforce it
-      if (Array.isArray((room as any).items) && (room as any).items.length > 0) {
-        const order = (room as any).items.map((ri: any) => String(ri.itemId || ri.id || ri.name || ri.item));
-        mapped.sort((a, b) => {
-          const ai = order.indexOf(String(a.id));
-          const bi = order.indexOf(String(b.id));
-          if (ai === -1 && bi === -1) return 0;
-          if (ai === -1) return 1;
-          if (bi === -1) return -1;
-          return ai - bi;
-        });
-      }
+      let mapped = existingInspection.items.map((it: any) => normalizeItem(it)) as InspectionItem[];
+      // Enforce room item order when available
+      mapped = enforceRoomOrder(mapped, room);
       setInspectionItems(mapped);
       return;
     }
@@ -217,20 +232,8 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
           if (items && items.length > 0) {
             let mapped = items.map((it: any) => mapDbItem(it));
             // enforce venue room item order when available
-            if (Array.isArray((room as any).items) && (room as any).items.length > 0) {
-              const order = (room as any).items.map((ri: any) => String(ri.itemId || ri.id || ri.name || ri.item));
-              mapped.sort((a: any, b: any) => {
-                const ai = order.indexOf(String(a.id));
-                const bi = order.indexOf(String(b.id));
-                if (ai === -1 && bi === -1) return 0;
-                if (ai === -1) return 1;
-                if (bi === -1) return -1;
-                return ai - bi;
-              });
-            }
+            mapped = enforceRoomOrder(mapped, room);
             setInspectionItems(mapped);
-
-            // Also fetch registered images metadata for this inspection + room from the DB
             (async () => {
               try {
                 const resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/list-images-db', {
