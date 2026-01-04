@@ -166,7 +166,7 @@ def lambda_handler(event, context):
                     except Exception:
                         existing_meta = None
 
-                    merged_created_at = existing_meta.get('createdAt') if existing_meta and existing_meta.get('createdAt') else ins.get('timestamp', now)
+                    merged_created_at = existing_meta.get('createdAt') if existing_meta and existing_meta.get('createdAt') else now
                     merged_created_by = existing_meta.get('createdBy') if existing_meta and existing_meta.get('createdBy') else created_by
                     merged_venue_id = existing_meta.get('venueId') if existing_meta and (existing_meta.get('venueId') is not None) else venue_id_val
                     merged_venue_name = existing_meta.get('venueName') if existing_meta and (existing_meta.get('venueName') is not None) else venue_name_val
@@ -244,7 +244,7 @@ def lambda_handler(event, context):
                     ':itemName': it.get('itemName') or it.get('name') or '',
                     ':status': it.get('status'),
                     ':comments': it.get('notes') or it.get('comments') or '',
-                    ':createdAt': ins.get('timestamp', now),
+                    ':createdAt': now,
                 }
 
                 update_parts = [
@@ -358,7 +358,7 @@ def lambda_handler(event, context):
 
             record = {
                 pk_attr: inspection_id,
-                'createdAt': ins.get('timestamp', now),
+                'createdAt': now,
                 'inspectorName': ins.get('inspectorName') or (ins.get('item') or {}).get('inspectorName'),
                 'venueId': ins.get('venueId'),
                 'venueName': ins.get('venueName'),
@@ -388,7 +388,7 @@ def lambda_handler(event, context):
                     ':itemName': ins.get('itemName') or (ins.get('item') or {}).get('itemName') or '',
                     ':status': status,
                     ':comments': comments,
-                    ':createdAt': ins.get('timestamp', now),
+                    ':createdAt': now,
                 }
 
                 update_parts = [
@@ -541,7 +541,7 @@ def lambda_handler(event, context):
                         print('Failed to resolve venue id by name:', e)
                 print('create_inspection resolved fields:', {'venueId': venue_id_val, 'venueName': venue_name_val, 'roomId': room_id_val})
 
-                item = {pk_attr: inspection_id, 'createdAt': ins.get('timestamp', now), 'updatedAt': now, 'createdBy': created_by, 'updatedBy': ins.get('updatedBy') or created_by, 'venueId': venue_id_val, 'venueName': venue_name_val, 'venue_name': venue_name_val, 'status': ins.get('status') or 'in-progress', 'completedAt': ins.get('completedAt') or None} 
+                item = {pk_attr: inspection_id, 'createdAt': now, 'updatedAt': now, 'createdBy': created_by, 'updatedBy': ins.get('updatedBy') or created_by, 'venueId': venue_id_val, 'venueName': venue_name_val, 'venue_name': venue_name_val, 'status': ins.get('status') or 'in-progress', 'completedAt': ins.get('completedAt') or None} 
                 if sk_attr:
                     item[sk_attr] = '__meta__'
                 table.put_item(Item=item)

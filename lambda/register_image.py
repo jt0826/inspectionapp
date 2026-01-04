@@ -51,7 +51,11 @@ def lambda_handler(event, context):
         content_type = body.get('contentType')
         filesize = int(body.get('filesize') or 0)
         uploaded_by = body.get('uploadedBy') or 'unknown'
-        uploaded_at = body.get('uploadedAt') or datetime.utcnow().isoformat()
+        # Use local ISO (UTC+8) for consistent timestamps
+        try:
+            uploaded_at = body.get('uploadedAt') or datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).isoformat()
+        except Exception:
+            uploaded_at = body.get('uploadedAt') or datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).isoformat()
 
         if not key:
             return build_response(400, {'message': 'key is required'})

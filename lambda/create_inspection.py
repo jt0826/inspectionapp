@@ -84,7 +84,7 @@ def lambda_handler(event, context):
                 venue_name_val = ins.get('venueName') or ins.get('venue_name') or (ins.get('venue') or {}).get('name')
 
                 # Build meta item for Inspection table
-                meta_item = {pk_attr: inspection_id, 'createdAt': ins.get('timestamp', now), 'updatedAt': now, 'createdBy': created_by, 'updatedBy': ins.get('updatedBy') or created_by, 'inspectorName': ins.get('inspectorName') or created_by, 'venueId': venue_id_val, 'venueName': venue_name_val, 'venue_name': venue_name_val, 'status': ins.get('status') or 'in-progress', 'completedAt': ins.get('completedAt') or None}
+                meta_item = {pk_attr: inspection_id, 'createdAt': now, 'updatedAt': now, 'createdBy': created_by, 'updatedBy': ins.get('updatedBy') or created_by, 'inspectorName': ins.get('inspectorName') or created_by, 'venueId': venue_id_val, 'venueName': venue_name_val, 'venue_name': venue_name_val, 'status': ins.get('status') or 'in-progress', 'completedAt': ins.get('completedAt') or None}
                 if sk_attr:
                     meta_item[sk_attr] = '__meta__'
 

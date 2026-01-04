@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Building2, MapPin, ChevronRight, CheckCircle2, ChevronDown } from 'lucide-react';
 import { Venue } from '../App';
+import { localIso } from '../utils/time';
 
 interface VenueSelectionProps {
   venues: Venue[];
@@ -30,7 +31,7 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
         const { getVenues } = await import('../utils/venueApi');
         const items = await getVenues();
         if (cancelled) return;
-        const mapped = items.map((v: any) => ({ id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || new Date().toISOString(), updatedAt: v.updatedAt || v.createdAt || new Date().toISOString(), createdBy: v.createdBy || '' }));
+        const mapped = items.map((v: any) => ({ id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || localIso(), updatedAt: v.updatedAt || v.createdAt || localIso(), createdBy: v.createdBy || '' }));
         setLocalVenues(mapped);
       } catch (e) {
         console.warn('Failed to load venues for selection', e);
@@ -57,7 +58,7 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
 
     // No draft exists: create a new inspection
     const inspectionId = `inspection-${Date.now()}`; // Generate a unique inspection ID
-    const now = new Date().toISOString();
+    const now = localIso();
     const payload = {
       action: 'create_inspection',
       inspection: {

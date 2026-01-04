@@ -3,6 +3,7 @@ import { ArrowLeft, CheckCircle2, XCircle, MinusCircle, Save, Camera, X } from '
 import { Venue, Room, InspectionItem, Inspection } from '../App';
 import { useAuth } from '../contexts/AuthContext';
 import { getInspectionItems, getInspections } from '../utils/inspectionApi';
+import { localIso } from '../utils/time';
 import { useToast } from './ToastProvider';
 
 interface InspectionFormProps {
@@ -256,7 +257,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                   contentType: p.contentType,
                   filesize: p.filesize,
                   uploadedBy: (user && user.name) || 'unknown',
-                  uploadedAt: new Date().toISOString()
+                  uploadedAt: localIso()
                 })
               });
               if (!registerResp.ok) throw new Error('Failed to register image');
@@ -271,7 +272,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                 filename: p.filename,
                 contentType: p.contentType,
                 filesize: p.filesize,
-                uploadedAt: new Date().toISOString(),
+                uploadedAt: localIso(),
                 uploadedBy: (user && user.name) || 'unknown',
                 status: 'uploaded'
               };
@@ -307,7 +308,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
       venueName: venue.name,
       roomId: room.id,
       roomName: room.name,
-      timestamp: new Date().toISOString(),
+      timestamp: localIso(),
       inspectorName: user?.name || 'Unknown',
       items: inspectionItems,
       status: 'completed',

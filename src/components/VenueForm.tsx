@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useToast } from './ToastProvider';
 import { ArrowLeft, Building2, Plus, Trash2, Save, Minus } from 'lucide-react';
 import { Venue, Room } from '../App';
+import { localIso } from '../utils/time';
 
 const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/venues-create'; // consolidated venues-create endpoint
 
@@ -111,8 +112,8 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
       venueId,
       name: name.trim(),
       address: address.trim(),
-      createdAt: venue?.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: venue?.createdAt || localIso(),
+      updatedAt: localIso(),
       createdBy: venue?.createdBy || 'Current User',
       rooms: rooms.map((room) => ({
         roomId: room.id || generateId('r'),

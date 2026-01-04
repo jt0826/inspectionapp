@@ -16,6 +16,7 @@ import { VenueLayout } from './components/VenueLayout';
 import { Dashboard } from './components/Dashboard';
 import { useToast } from './components/ToastProvider';
 import { getVenueById } from './utils/venueApi';
+import { localIso } from './utils/time';
 
 export interface Venue {
   id: string;
@@ -148,8 +149,8 @@ function AppContent() {
       name: r.name || '',
       items: (r.items || []).map((it: any) => ({ id: it.itemId || it.id, name: it.name || it.item || '' })),
     })),
-    createdAt: v.createdAt || new Date().toISOString(),
-    updatedAt: v.updatedAt || v.createdAt || new Date().toISOString(),
+    createdAt: v.createdAt || localIso(),
+    updatedAt: v.updatedAt || v.createdAt || localIso(),
     createdBy: v.createdBy || ''
   });
 
@@ -200,7 +201,7 @@ function AppContent() {
                 venueId: venue.id,
                 venueName: venue.name,
                 venue_name: venue.name,
-                updatedAt: new Date().toISOString(),
+                updatedAt: localIso(),
                 updatedBy: user?.name || 'Unknown'
               }
             }),
@@ -243,7 +244,7 @@ function AppContent() {
                 inspection_id: currentInspectionId,
                 roomId: room.id,
                 roomName: room.name,
-                updatedAt: new Date().toISOString(),
+                updatedAt: localIso(),
                 updatedBy: user?.name || 'Unknown'
               }
             }),
@@ -330,7 +331,7 @@ function AppContent() {
       venueName: inspectionData.venueName || inspectionData.venue_name || '',
       roomId: inspectionData.roomId || inspectionData.room_id || '',
       roomName: inspectionData.roomName || inspectionData.room_name || '',
-      timestamp: inspectionData.createdAt || inspectionData.timestamp || new Date().toISOString(),
+      timestamp: inspectionData.createdAt || inspectionData.timestamp || localIso(),
       inspectorName: inspectionData.createdBy || inspectionData.inspectorName || user?.name || 'Unknown',
       items: [],
       status: (inspectionData.status as any) || 'in-progress',
@@ -430,7 +431,7 @@ function AppContent() {
       venueName: incoming.venueName || incoming.venue_name || '',
       roomId: incoming.roomId || incoming.room_id || '',
       roomName: incoming.roomName || incoming.room_name || '',
-      timestamp: incoming.timestamp || incoming.created_at || new Date().toISOString(),
+      timestamp: incoming.timestamp || incoming.created_at || localIso(),
       inspectorName: incoming.inspectorName || incoming.created_by || 'Unknown',
       items: incoming.items || [],
       status: incoming.status || 'in-progress',
@@ -604,8 +605,8 @@ function AppContent() {
       // Creation flow: append venue and navigate back to venues list
       const newVenue = {
         ...venue,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        createdAt: localIso(),
+        updatedAt: localIso(),
         createdBy: user?.name || 'Unknown',
       };
       setVenues([...venues, newVenue]);
@@ -616,7 +617,7 @@ function AppContent() {
       // Edit flow: update in-place and remain on edit screen
       const updatedVenue = {
         ...venue,
-        updatedAt: new Date().toISOString(),
+        updatedAt: localIso(),
       };
       setVenues(venues.map((v) => (v.id === venue.id ? updatedVenue : v)));
       setInspections(
@@ -686,7 +687,7 @@ function AppContent() {
       try {
         const v = await getVenueById(String(pendingVenueId));
         if (v) {
-          const mapped = { id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || new Date().toISOString(), updatedAt: v.updatedAt || v.createdAt || new Date().toISOString(), createdBy: v.createdBy || '' } as Venue;
+          const mapped = { id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || localIso(), updatedAt: v.updatedAt || v.createdAt || localIso(), createdBy: v.createdBy || '' } as Venue;
           setSelectedVenue(mapped);
         }
       } catch (e) {

@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { getInspectionsPartitioned } from '../utils/inspectionApi';
 
 import { getVenueById } from '../utils/venueApi';
+import { localIso } from '../utils/time';
 
 interface RoomListProps {
   venue?: Venue | null;
@@ -49,7 +50,8 @@ export function RoomList({ venue: propVenue, venueId, onRoomSelect, onBack, insp
         console.log('[RoomList] getVenueById result for', vid, v);
         if (cancelled) return;
         if (v) {
-          const mapped = { id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || new Date().toISOString(), updatedAt: v.updatedAt || v.createdAt || new Date().toISOString(), createdBy: v.createdBy || '' } as Venue;
+
+        const mapped = { id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || localIso(), updatedAt: v.updatedAt || v.createdAt || localIso(), createdBy: v.createdBy || '' } as Venue;
           setVenue(mapped);
           if (typeof onVenueLoaded === 'function') onVenueLoaded(mapped);
         }
