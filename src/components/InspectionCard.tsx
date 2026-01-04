@@ -34,8 +34,10 @@ export const InspectionCard = ({ inspection, variant = 'ongoing', onClick, onDel
   const subtitleClass = isOngoing ? 'text-orange-700' : 'text-green-700';
   const metaClass = isOngoing ? 'text-orange-600' : 'text-green-600';
 
+  // Only use server-provided totals (from `summary.totals` or `inspection.totals`).
+  // Do NOT compute totals from `inspection.items` on the client; hide counts when not provided by server.
   const sTotals = summary && (summary.totals as any) ? (summary.totals as any) : (inspection.totals || null);
-  const totals = sTotals || { pass: 0, fail: 0, na: 0, pending: 0, total: 0 };
+  const totals = sTotals || null;
   const lastUpdated = pick(inspection, 'updatedAt', 'updated_at') || (summary && (summary.updatedAt || (summary as any).updated_at)) || (inspection.raw as any)?.updatedAt || (inspection.raw as any)?.updated_at || undefined;
   const lastUpdatedBy = pick(inspection, 'updatedBy', 'updated_by') || (summary && (summary.updatedBy || (summary as any).updated_by)) || (inspection.raw as any)?.updatedBy || (inspection.raw as any)?.updated_by || undefined;
 
@@ -76,19 +78,19 @@ export const InspectionCard = ({ inspection, variant = 'ongoing', onClick, onDel
               <div className="flex gap-4 text-sm mt-2">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-green-600" />
-                  <span className="text-gray-700">Pass: <NumberFlow value={totals.pass ?? null} className="inline-block" /></span>
+                  <span className="text-gray-700">Pass: <NumberFlow value={totals.pass ?? 0} className="inline-block" aria-label={`pass-count-${inspection.id}`} /></span>
                 </div>
                 <div className="flex items-center gap-2">
                   <XCircle className="w-4 h-4 text-red-600" />
-                  <span className="text-gray-700">Fail: <NumberFlow value={totals.fail ?? null} className="inline-block" /></span>
+                  <span className="text-gray-700">Fail: <NumberFlow value={totals.fail ?? 0} className="inline-block" aria-label={`fail-count-${inspection.id}`} /></span>
                 </div>
                 <div className="flex items-center gap-2">
                   <MinusCircle className="w-4 h-4 text-gray-400" />
-                  <span className="text-gray-700">NA: <NumberFlow value={totals.na ?? null} className="inline-block" /></span>
+                  <span className="text-gray-700">NA: <NumberFlow value={totals.na ?? 0} className="inline-block" aria-label={`na-count-${inspection.id}`} /></span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Clock className="w-4 h-4 text-yellow-500" />
-                  <span className="text-gray-700">Pending: <NumberFlow value={totals.pending ?? null} className="inline-block" /></span>
+                  <span className="text-gray-700">Pending: <NumberFlow value={totals.pending ?? 0} className="inline-block" aria-label={`pending-count-${inspection.id}`} /></span>
                 </div>
               </div>
             )}
