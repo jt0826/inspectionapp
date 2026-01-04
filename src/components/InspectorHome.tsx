@@ -547,7 +547,7 @@ export function InspectorHome({
           {/* Completed Inspections */}
           <div className="p-4 lg:p-6">
             <div className="flex items-center justify-between mb-4 lg:mb-6">
-              <h2 className="text-gray-700 text-lg lg:text-xl">Completed Inspections</h2>
+              <h2 className="text-gray-700 text-lg lg:text-xl">Recently Completed Inspections</h2>
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2 mt-2 sm:mt-0 sm:ml-auto">
                   <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm">
