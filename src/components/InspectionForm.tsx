@@ -341,7 +341,21 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
         console.error('Failed to save inspection:', res.status, text);
         alert('Failed to save inspection. See console.');
       } else {
-        const data = await res.json();
+        // Some browsers (notably iOS WebKit) may reject `res.json()` for empty or otherwise inaccessible bodies
+        // and throw a TypeError. Be resilient: read text and parse JSON if possible, otherwise proceed.
+        let data: any = null;
+        try {
+          const text = await res.text();
+          if (text) {
+            try { data = JSON.parse(text); } catch (e) { console.warn('Non-JSON save_inspection response, returning raw text', e, text); data = text; }
+          } else {
+            data = {};
+          }
+        } catch (e) {
+          console.warn('Failed to read save_inspection response body', e);
+          data = null;
+        }
+
         console.log('save_inspection response', data);
         // do not navigate away on Save; show brief confirmation instead (global toast)
         show('Saved', { variant: 'success' });
