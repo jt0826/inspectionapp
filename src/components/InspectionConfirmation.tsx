@@ -2,7 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { Building2, MapPin, CheckCircle2, Home, ArrowRight, Loader2 } from 'lucide-react';
 import { Venue } from '../App';
 import { getVenueById } from '../utils/venueApi';
-import { localIso } from '../utils/time';
 
 interface InspectionConfirmationProps {
   venue?: Venue | null;
@@ -30,7 +29,7 @@ export function InspectionConfirmation({
           if (v && !cancelled) {
 
 
-            const mapped = { id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || localIso(), updatedAt: v.updatedAt || v.createdAt || localIso(), createdBy: v.createdBy || '' } as Venue;
+            const mapped = { id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || '', updatedAt: v.updatedAt || v.createdAt || '', createdBy: v.createdBy || '' } as Venue;
             setLocalVenue(mapped);
           }
         } catch (e) {

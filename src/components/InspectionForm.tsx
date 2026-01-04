@@ -3,7 +3,6 @@ import { ArrowLeft, CheckCircle2, XCircle, MinusCircle, Save, Camera, X } from '
 import { Venue, Room, InspectionItem, Inspection } from '../App';
 import { useAuth } from '../contexts/AuthContext';
 import { getInspectionItems, getInspections } from '../utils/inspectionApi';
-import { localIso } from '../utils/time';
 import { useToast } from './ToastProvider';
 
 interface InspectionFormProps {
@@ -256,8 +255,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                   filename: p.filename,
                   contentType: p.contentType,
                   filesize: p.filesize,
-                  uploadedBy: (user && user.name) || 'unknown',
-                  uploadedAt: localIso()
+                  uploadedBy: (user && user.name) || 'unknown'
                 })
               });
               if (!registerResp.ok) throw new Error('Failed to register image');
@@ -272,7 +270,6 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                 filename: p.filename,
                 contentType: p.contentType,
                 filesize: p.filesize,
-                uploadedAt: localIso(),
                 uploadedBy: (user && user.name) || 'unknown',
                 status: 'uploaded'
               };
@@ -308,7 +305,6 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
       venueName: venue.name,
       roomId: room.id,
       roomName: room.name,
-      timestamp: localIso(),
       inspectorName: user?.name || 'Unknown',
       items: inspectionItems,
       status: 'completed',
@@ -329,7 +325,6 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
           venueName: inspectionToSubmit.venueName,
           roomId: inspectionToSubmit.roomId,
           roomName: inspectionToSubmit.roomName,
-          timestamp: inspectionToSubmit.timestamp,
           inspectorName: inspectionToSubmit.inspectorName,
           items: inspectionToSubmit.items.map((it: any) => ({ itemId: it.id, status: it.status, notes: it.notes, itemName: it.item, order: it.order, images: (it.photos || []).filter((p: any) => p.imageId).map((p: any) => ({ imageId: p.imageId, s3Key: p.s3Key, filename: p.filename })) }))
         }

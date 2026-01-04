@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Building2, MapPin, ChevronRight, CheckCircle2, ChevronDown } from 'lucide-react';
 import { Venue } from '../App';
-import { localIso } from '../utils/time';
 
 interface VenueSelectionProps {
   venues: Venue[];
@@ -31,7 +30,7 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
         const { getVenues } = await import('../utils/venueApi');
         const items = await getVenues();
         if (cancelled) return;
-        const mapped = items.map((v: any) => ({ id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || localIso(), updatedAt: v.updatedAt || v.createdAt || localIso(), createdBy: v.createdBy || '' }));
+        const mapped = items.map((v: any) => ({ id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || '', updatedAt: v.updatedAt || v.createdAt || '', createdBy: v.createdBy || '' }));
         setLocalVenues(mapped);
       } catch (e) {
         console.warn('Failed to load venues for selection', e);
@@ -58,14 +57,10 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
 
     // No draft exists: create a new inspection
     const inspectionId = `inspection-${Date.now()}`; // Generate a unique inspection ID
-    const now = localIso();
     const payload = {
       action: 'create_inspection',
       inspection: {
         inspection_id: inspectionId,
-        timestamp: now,
-        createdAt: now,
-        updatedAt: now,
         createdBy: 'Current User',
         updatedBy: 'Current User',
         inspectorName: 'Current User',
@@ -94,7 +89,7 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
         let body = data && data.body ? (typeof data.body === 'string' ? JSON.parse(data.body) : data.body) : data;
         const created = body?.inspectionData || body?.inspection || body;
         if (typeof onInspectionCreated === 'function') {
-          onInspectionCreated(created || { inspection_id: inspectionId, createdAt: now, venueId: selectedVenue?.id, venueName: selectedVenue?.name, venue_name: selectedVenue?.name, status: 'in-progress' });
+          onInspectionCreated(created || { inspection_id: inspectionId, venueId: selectedVenue?.id, venueName: selectedVenue?.name, venue_name: selectedVenue?.name, status: 'in-progress' });
         }
         // Notify UI listeners that an inspection was created so counts refresh
         try {

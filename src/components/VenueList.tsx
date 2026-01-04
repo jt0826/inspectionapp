@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import FadeIn from 'react-fade-in';
 import { ArrowLeft, Building2, MapPin, Plus, Edit2, Trash2, User, LogOut, Clock, UserCircle } from 'lucide-react';
 import { Venue } from '../App';
-import { localIso } from '../utils/time';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from './ToastProvider';
 import type { Inspection } from '../App';
@@ -52,7 +51,7 @@ export function VenueList({
       try {
         const items = await getVenues();
         if (cancelled) return;
-        const mapped = items.map((v: any) => ({ id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || localIso(), updatedAt: v.updatedAt || v.createdAt || localIso(), createdBy: v.createdBy || '' }));
+        const mapped = items.map((v: any) => ({ id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || '', updatedAt: v.updatedAt || v.createdAt || '', createdBy: v.createdBy || '' }));
         setLocalVenues(mapped);
         if (typeof onVenuesLoaded === 'function') onVenuesLoaded(mapped);
       } catch (e) {
@@ -100,7 +99,7 @@ export function VenueList({
         // Refresh venues from server to ensure list is authoritative
         try {
           const items = await getVenues();
-          const mapped = items.map((v: any) => ({ id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || localIso(), updatedAt: v.updatedAt || v.createdAt || localIso(), createdBy: v.createdBy || '' }));
+          const mapped = items.map((v: any) => ({ id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || '', updatedAt: v.updatedAt || v.createdAt || '', createdBy: v.createdBy || '' }));
           setLocalVenues(mapped);
           if (typeof onVenuesLoaded === 'function') onVenuesLoaded(mapped);
           show('Venue list refreshed', { variant: 'success' });

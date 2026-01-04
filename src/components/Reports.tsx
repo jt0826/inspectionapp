@@ -18,6 +18,7 @@ export function Reports({ inspections, venues, onBack }: ReportsProps) {
     const filteredInspections = inspections.filter((inspection) => {
       if (selectedVenue !== 'all' && inspection.venueId !== selectedVenue) return false;
       if (dateRange.start || dateRange.end) {
+        if (!inspection.timestamp) return false;
         const inspectionDate = new Date(inspection.timestamp);
         const startDate = dateRange.start ? new Date(dateRange.start) : null;
         const endDate = dateRange.end ? new Date(dateRange.end + 'T23:59:59') : null;
@@ -321,7 +322,7 @@ export function Reports({ inspections, venues, onBack }: ReportsProps) {
                         <p className="text-gray-900">{inspection.venueName}</p>
                         <p className="text-gray-600 text-xs">{inspection.roomName}</p>
                         <p className="text-gray-500 text-xs">
-                          {new Date(inspection.timestamp).toLocaleString()}
+                          {inspection.timestamp ? new Date(inspection.timestamp).toLocaleString() : 'N/A'}
                         </p>
                       </div>
                       {failed > 0 && (
