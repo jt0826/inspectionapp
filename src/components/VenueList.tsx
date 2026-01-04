@@ -6,6 +6,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from './ToastProvider';
 import type { Inspection } from '../App';
 
+import { getVenues } from '../utils/venueApi';
+
 interface VenueListProps {
   venues: Venue[];
   onVenueSelect: (venue: Venue) => void;
@@ -16,6 +18,7 @@ interface VenueListProps {
   onDeleteVenue: (venueId: string) => void;
   onBack: () => void;
   inspectionsCount?: Record<string, number>;
+  onVenuesLoaded?: (venues: Venue[]) => void; // optional callback to inform parent that venues have been loaded
 } 
 
 export function VenueList({ 
@@ -28,12 +31,35 @@ export function VenueList({
   onDeleteVenue,
   onBack,
   inspectionsCount,
+  onVenuesLoaded,
 }: VenueListProps) {
   const { user, logout } = useAuth();
 
   const [deleting, setDeleting] = useState(false);
+  const [localVenues, setLocalVenues] = useState<Venue[]>(venues || []);
   // Use global toast + confirm
   const { show, confirm } = useToast();
+
+  // Fetch venues when this page loads if none provided
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (venues && venues.length > 0) {
+        setLocalVenues(venues);
+        return;
+      }
+      try {
+        const items = await getVenues();
+        if (cancelled) return;
+        const mapped = items.map((v: any) => ({ id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || new Date().toISOString(), updatedAt: v.updatedAt || v.createdAt || new Date().toISOString(), createdBy: v.createdBy || '' }));
+        setLocalVenues(mapped);
+        if (typeof onVenuesLoaded === 'function') onVenuesLoaded(mapped);
+      } catch (e) {
+        console.warn('Failed to load venues on VenueList mount', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const handleDeleteClick = async (e: React.MouseEvent, venue: Venue) => {
     e.stopPropagation();
@@ -129,14 +155,14 @@ export function VenueList({
 
         {/* Venues List */}
         <div className="p-4 lg:p-6">
-          {venues.length === 0 ? (
+          {(localVenues.length === 0) ? (
             <div className="text-center py-12 lg:py-16 text-gray-500">
               <Building2 className="w-12 h-12 lg:w-16 lg:h-16 mx-auto mb-4 text-gray-400" />
               <p className="text-sm lg:text-base">No venues yet. Add your first facility to begin.</p>
             </div>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-4 lg:gap-6">
-              {venues.map((venue, idx) => (
+              {localVenues.map((venue, idx) => (
                 <FadeIn key={venue.id} delay={80 + idx * 40} transitionDuration={240}>
                   <div
                     className="border border-gray-200 rounded-lg hover:border-blue-500 hover:shadow-lg transition-all group"

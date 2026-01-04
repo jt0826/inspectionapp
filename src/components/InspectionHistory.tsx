@@ -4,21 +4,22 @@ import NumberFlow from '@number-flow/react';
 import FadeInText from './FadeInText';
 import FadeIn from 'react-fade-in';
 import { Inspection } from '../App';
-import { getInspections, getInspectionItems } from '../utils/inspectionApi';
+import { getInspectionsPartitioned } from '../utils/inspectionApi';
+import { computeTotalsFromInspection } from '../utils/inspectionHelpers';
+import InspectionCard from './InspectionCard';
 
 interface InspectionHistoryProps {
   inspections: Inspection[];
   onBack: () => void;
   onDeleteInspection: (inspectionId: string) => void;
+  onResumeInspection?: (inspection: string | Record<string, unknown>) => void;
 }
 
 import { useToast } from './ToastProvider';
-import { checkInspectionComplete } from '../utils/inspectionApi';
 
-export function InspectionHistory({ inspections, onBack, onDeleteInspection }: InspectionHistoryProps) {
+export function InspectionHistory({ inspections, onBack, onDeleteInspection, onResumeInspection }: InspectionHistoryProps) {
   const [searchTerm, setSearchTerm] = useState('');
   // Fade-in animations
-  const [filterType, setFilterType] = useState<'all' | 'passed' | 'failed'>('all');
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const { show, confirm } = useToast();
@@ -34,109 +35,103 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection }: I
     });
   };
 
-  // Completed determination: status === 'completed' or all items are pass (works with DB rows or local objects)
-  const isComplete = (inspection: any) => {
-    const status = String(inspection.status || inspection.state || inspection.status || '').toLowerCase();
-    if (status === 'completed') return true;
-    const items = (inspection.items || []) as any[];
-    if (!Array.isArray(items) || items.length === 0) return false;
-    return items.every((it) => String(it?.status || '').toLowerCase() === 'pass');
-  };
 
-  // Prefer DB-sourced inspections when available for accurate counts
-  const [dbInspections, setDbInspections] = useState<Record<string, unknown>[]>([]);
+
+  // Prefer server-provided inspections from a single list_inspections call
+  const [sourceInspections, setSourceInspections] = useState<any[]>([]);
+  const [serverProvidedCompleted, setServerProvidedCompleted] = useState<boolean>(false);
+
+  const pick = (rec: Record<string, unknown> | null | undefined, ...keys: string[]) => {
+    if (!rec) return '';
+    for (const k of keys) {
+      const v = (rec as any)[k];
+      if (v !== undefined && v !== null && v !== '') return String(v);
+    }
+    return '';
+  };
 
   useEffect(() => {
     let cancelled = false;
-    const fetchAndEnrich = async () => {
+    const fetchList = async () => {
       try {
-        const items = await getInspections();
+        const body = await getInspectionsPartitioned();
         if (cancelled) return;
 
-        // Sequential enrichment: fetch items for each inspection and attach to row when available
-        const enriched: any[] = [];
-        for (const it of (items || [])) {
-          try {
-            const id = String(it.inspection_id || it.id || '');
-            const fetched = await getInspectionItems(id);
-            if (fetched && Array.isArray(fetched)) {
-              enriched.push({ ...it, items: fetched });
-            } else {
-              // preserve any existing items if API didn't return them
-              enriched.push({ ...it, items: it.items || [] });
-            }
-          } catch (e) {
-            enriched.push({ ...it, items: it.items || [] });
-          }
+        // If server provided a completed partition, prefer that as the source list to display
+        if (body && Array.isArray(body.completed) && body.completed.length > 0) {
+          setSourceInspections(body.completed);
+          setServerProvidedCompleted(true);
+        } else if (body && Array.isArray(body.inspections) && body.inspections.length > 0) {
+          // fallback: use inspections array and filter by status === 'completed' below
+          setSourceInspections(body.inspections as any[]);
+          setServerProvidedCompleted(false);
+        } else {
+          // Last resort: call legacy getInspections (returns array)
+          const items = await import('../utils/inspectionApi').then(m => m.getInspections());
+          setSourceInspections(items || []);
+          setServerProvidedCompleted(false);
         }
-
-        if (!cancelled) setDbInspections(enriched);
       } catch (e) {
         console.warn('Failed to fetch inspections for history', e);
-        if (!cancelled) setDbInspections([]);
+        setSourceInspections([]);
+        setServerProvidedCompleted(false);
       }
     };
 
-    fetchAndEnrich();
+    fetchList();
 
-    const onFocus = () => { fetchAndEnrich(); };
-    const onSaved = () => { fetchAndEnrich(); };
+    const onFocus = () => { fetchList(); };
+    const onSaved = () => { fetchList(); };
     window.addEventListener('focus', onFocus);
     window.addEventListener('inspectionSaved', onSaved as EventListener);
 
     return () => { cancelled = true; window.removeEventListener('focus', onFocus); window.removeEventListener('inspectionSaved', onSaved as EventListener); };
   }, []);
 
-  const sourceInspections: any[] = (dbInspections && dbInspections.length > 0) ? dbInspections : inspections;
+  // Use sourceInspections if present, otherwise use the parent inspections prop
+  const effectiveInspections: any[] = (sourceInspections && sourceInspections.length > 0) ? sourceInspections : inspections;
 
-  // Compute a completion map (reuse same logic as InspectorHome: status, items, or server check)
-  const [completedMap, setCompletedMap] = useState<Record<string, boolean>>({});
-  const [checkingComplete, setCheckingComplete] = useState(true);
+  // We rely on server-side partitioning or the inspection's status to determine completed inspections.
+  // No per-inspection network calls are made here to keep history loading to a single API request.
+  const [checkingComplete, setCheckingComplete] = useState(false);
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setCheckingComplete(true);
-      const map: Record<string, boolean> = {};
-      for (const it of sourceInspections) {
-        try {
-          const id = String(it.inspection_id || it.id || '');
-          if (!id) continue;
-          const status = String(it.status || it.state || '').toLowerCase();
-          if (status === 'completed') { map[id] = true; continue; }
-
-          const items = (it.items || []) as any[];
-          if (Array.isArray(items) && items.length > 0) {
-            map[id] = items.every((i) => String(i?.status || '').toLowerCase() === 'pass');
-            if (map[id]) continue;
-          }
-
-          const venueId = String(it.venueId || it.venue_id || it.venue || '');
-          if (!venueId) { map[id] = false; continue; }
-
-          try {
-            const c = await checkInspectionComplete(id, venueId);
-            map[id] = !!(c && c.complete === true);
-          } catch (e) {
-            map[id] = false;
-          }
-        } catch (e) {
-          // Resilient: ignore and move on
-        }
-      }
-      if (!cancelled) {
-        setCompletedMap(map);
-        setCheckingComplete(false);
-        console.log('[History] sourceInspections:', sourceInspections.length, 'completedMapCount:', Object.values(map).filter(Boolean).length, 'completedIds:', Object.keys(map).filter(k => map[k]));
-      }
-    })();
-    return () => { cancelled = true; };
+    // If sourceInspections came from the server's 'completed' partition, we are already showing completed rows. Otherwise, we may need to filter by status below.
+    setCheckingComplete(false);
   }, [sourceInspections]);
 
+  // Normalize inspections from server to the home / card shape. This means ensuring totals and updatedAt/updatedBy are present.
+  const normalize = (rec: any) => {
+    if (!rec) return null as any;
+
+    // If the server already returned totals, prefer them. If not, use computeTotalsFromInspection as a fallback.
+    const totals = (rec.totals && typeof rec.totals === 'object') ? rec.totals : computeTotalsFromInspection(rec);
+
+    // Some older records may use lastUpdated/lastUpdatedBy instead of updatedAt/updatedBy - prefer the latter but fall back to lastUpdated
+    const updatedAt = rec.updatedAt || rec.lastUpdated || pick(rec, 'lastUpdatedAt', 'lastUpdated') || '';
+    const updatedBy = rec.updatedBy || pick(rec, 'lastUpdatedBy', 'lastUpdatedByName', 'updated_by') || '';
+
+    // Determine completedAt for completed variants: server may return 'completedAt', 'completed_at', or 'completedTimestamp' or the record may have 'updatedAt' which equals completion time.
+    const completedAt = pick(rec, 'completedAt', 'completed_at', 'completedTimestamp') || updatedAt || '';
+
+    return {
+      ...rec,
+      totals,
+      updatedAt,
+      updatedBy,
+      completedAt,
+    };
+  };
+
+  const normalizedInspections = effectiveInspections.map(normalize).filter(Boolean);
+
   // History should show only completed inspections (based on status, items, or server check)
-  const completedInspections = sourceInspections.filter((inspection: any) => {
-    const id = String(inspection.inspection_id || inspection.id || '');
-    if (isComplete(inspection)) return true;
-    if (id && completedMap[id]) return true;
+  // Determine completed inspections from the server-supplied list or fallback to status field
+  const completedInspections = normalizedInspections.filter((inspection: any) => {
+    const status = String(inspection.status || inspection.state || '').toLowerCase();
+    if (status === 'completed') return true;
+    // If the server provided a completed partition then effectiveInspections already contains only completed ones
+    // Otherwise, we fall back to the status check above
     return false;
   });
 
@@ -158,16 +153,7 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection }: I
 
     if (!matchesSearch) return false;
 
-    // Type filter
-    if (filterType === 'all') {
-      // proceed
-    } else {
-      const rawItems = (inspection.items || []) as any[];
-      const items = rawItems.filter((it) => it && (it.itemId || it.id || it.item || it.ItemId));
-      const failedItems = items.filter((i: any) => String(i?.status || '').toLowerCase() === 'fail').length;
-      if (filterType === 'failed' && !(failedItems > 0)) return false;
-      if (filterType === 'passed' && !(failedItems === 0)) return false;
-    }
+
 
     // Date range filter (client-side) - use completedAt if available, otherwise updatedAt/timestamp
     const rawDate = inspection.completedAt || inspection.completed_at || inspection.updatedAt || inspection.updated_at || inspection.timestamp || inspection.createdAt || inspection.created_at;
@@ -198,10 +184,12 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection }: I
     const id = String(inspection.id || inspection.inspection_id || '');
     const rawItems = (inspection.items || []) as any[];
     const items = rawItems.filter((it) => it && (it.itemId || it.id || it.item || it.ItemId));
-    const passedItems = items.filter((i) => String(i?.status || '').toLowerCase() === 'pass').length;
-    const failedItems = items.filter((i) => String(i?.status || '').toLowerCase() === 'fail').length;
-    const naItems = items.filter((i) => String(i?.status || '').toLowerCase() === 'na').length;
-    const totalItems = items.length;
+
+    // Prefer server-provided totals when available
+    const passedItems = inspection.totals && typeof inspection.totals.pass === 'number' ? inspection.totals.pass : items.filter((i) => String(i?.status || '').toLowerCase() === 'pass').length;
+    const failedItems = inspection.totals && typeof inspection.totals.fail === 'number' ? inspection.totals.fail : items.filter((i) => String(i?.status || '').toLowerCase() === 'fail').length;
+    const naItems = inspection.totals && typeof inspection.totals.na === 'number' ? inspection.totals.na : items.filter((i) => String(i?.status || '').toLowerCase() === 'na').length;
+    const totalItems = inspection.totals && typeof inspection.totals.total === 'number' ? inspection.totals.total : items.length;
     const hasIssues = failedItems > 0;
 
     const venueName = String(inspection.venueName || inspection.venue_name || inspection.venue || '');
@@ -327,39 +315,7 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection }: I
               </div>
             </div>
 
-            {/* Filter Buttons */}
-            <div className="flex gap-2">
-              <button
-                onClick={() => setFilterType('all')}
-                className={`flex-1 lg:flex-none px-4 py-2 rounded-lg text-sm lg:text-base transition-colors ${
-                  filterType === 'all'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                All
-              </button>
-              <button
-                onClick={() => setFilterType('passed')}
-                className={`flex-1 lg:flex-none px-4 py-2 rounded-lg text-sm lg:text-base transition-colors ${
-                  filterType === 'passed'
-                    ? 'bg-green-600 text-white'
-                    : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                Passed
-              </button>
-              <button
-                onClick={() => setFilterType('failed')}
-                className={`flex-1 lg:flex-none px-4 py-2 rounded-lg text-sm lg:text-base transition-colors ${
-                  filterType === 'failed'
-                    ? 'bg-red-600 text-white'
-                    : 'bg-white border border-gray-300 text-gray-700 hover:bg-gray-50'
-                }`}
-              >
-                Issues
-              </button>
-            </div>
+
 
             {/* Date range filter (client-side) */}
             <div className="flex items-center gap-2">
@@ -369,7 +325,8 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection }: I
               <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm">
                 {filteredInspections ? filteredInspections.length : '—'} shown
               </span>
-            </div> 
+            </div>
+            <div className="w-full lg:hidden mt-1 text-xs text-gray-500">Tap to select the date</div> 
           </div>
         </div>
 
@@ -379,14 +336,24 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection }: I
             <div className="text-center py-12 lg:py-16 text-gray-500">
               <History className="w-12 h-12 lg:w-16 lg:h-16 mx-auto mb-4 text-gray-400" />
               <p className="text-sm lg:text-base">
-                {searchTerm || filterType !== 'all' ? 'No inspections match your filters' : 'No completed inspections yet'}
+                {searchTerm || startDate || endDate ? 'No inspections match your filters' : 'No completed inspections yet'}
               </p>
             </div>
           ) : (
             <div className="space-y-4 lg:space-y-6">
               {sortedInspections.map((inspection, idx) => (
                 <FadeIn key={String(inspection.inspection_id || inspection.id || idx)} delay={80 + idx * 40} transitionDuration={300}>
-                  {renderInspectionItem(inspection, idx)}
+                  <InspectionCard
+                    inspection={inspection}
+                    variant="completed"
+                    onClick={() => {
+                      if (typeof onResumeInspection === 'function') {
+                        onResumeInspection({ ...inspection, status: 'completed' });
+                      } else {
+                        try { window.dispatchEvent(new CustomEvent('viewInspection', { detail: { inspectionId: String(inspection.id || inspection.inspection_id || '') } })); } catch (e) { /* ignore */ }
+                      }
+                    }}
+                  />
                 </FadeIn>
               ))}
             </div>

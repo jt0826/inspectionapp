@@ -59,7 +59,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       localStorage.setItem('user', JSON.stringify(userData));
       return true;
     }
-    
+
+    // dev user
+    if (email === 'dev@facility.com' && password === 'dev') {
+      const userData: User = {
+        id: 'user_dev',
+        name: 'Developer',
+        email: 'dev@facility.com',
+        role: 'Developer',
+        organization: 'Facility Inspection Services',
+      };
+      setUser(userData);
+      localStorage.setItem('user', JSON.stringify(userData));
+      return true;
+    }
+
     return false;
   };
 

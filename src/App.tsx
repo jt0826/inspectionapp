@@ -126,6 +126,7 @@ type View =
 function AppContent() {
   const { isAuthenticated, user } = useAuth();
   const [currentView, setCurrentView] = useState<View>('home');
+  const [inspectionReadOnly, setInspectionReadOnly] = useState<boolean>(false);
   // Replace hard-coded venues with data from backend
   const [venues, setVenues] = useState<Venue[]>([]);
   // Use consolidated venueslh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/venues-query
@@ -148,78 +149,23 @@ function AppContent() {
     createdBy: v.createdBy || ''
   });
 
-  // Fetch venues from backend
-  const fetchVenues = async () => {
-    try {
-      // Single endpoint: POST with action 'get_venues'
-      const res = await fetch(`${API_BASE}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'get_venues' }),
-      });
-      const data = await res.json();
-
-      // Supports API Gateway proxy response shape
-      let items: any[] = [];
-      if (Array.isArray(data)) items = data;
-      else if (Array.isArray(data.venues)) items = data.venues;
-      else if (data.body) {
-        try {
-          const parsed = typeof data.body === 'string' ? JSON.parse(data.body) : data.body;
-          items = parsed.venues || parsed.Items || parsed || [];
-        } catch (err) {
-          console.warn('Failed to parse venues.body', err);
-        }
-      }
-
-      setVenues(items.map(mapDbVenueToVenue));
-    } catch (err) {
-      console.error('Failed to fetch venues:', err);
-      // fallback: keep existing venues if any
-    }
-  };
-
-  // Load venues on mount
-  React.useEffect(() => { fetchVenues(); }, []);
+  // NOTE: Venue fetching is now performed by VenueList and RoomList when those pages load.
+  // App keeps a `venues` state that will be populated by child pages via callbacks when necessary.
   const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const [inspections, setInspections] = useState<Inspection[]>([]);
-  const [dbInspections, setDbInspections] = useState<any[]>([]);
+  const [pendingVenueId, setPendingVenueId] = useState<string | null>(null);
 
-  const fetchDbInspections = async () => {
-    try {
-      const res = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-query', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'list_inspections' }),
-      });
-      const data = await res.json();
-      let items: any[] = [];
-      if (Array.isArray(data.inspections)) items = data.inspections;
-      else if (data.body) {
-        try {
-          const parsed = typeof data.body === 'string' ? JSON.parse(data.body) : data.body;
-          items = parsed.inspections || parsed.Items || [];
-        } catch (err) {
-          console.warn('Failed to parse list_inspections.body', err);
-        }
-      } else if (Array.isArray(data)) items = data;
-      setDbInspections(items);
-    } catch (err) {
-      console.warn('Failed to fetch inspections (db):', err);
-      setDbInspections([]);
-    }
-  };
-
-  React.useEffect(() => { fetchDbInspections(); const onFocus = () => fetchDbInspections(); window.addEventListener('focus', onFocus); return () => window.removeEventListener('focus', onFocus); }, []);
+  // NOTE: Database-sourced inspections are now fetched by `InspectorHome` to avoid duplicate network calls.
+  // The App-level code no longer fetches `list_inspections` to prevent unnecessary duplication and reduce load.
 
   const inspectionsCountMap = React.useMemo(() => {
-    return dbInspections.reduce((acc: Record<string, number>, i: any) => {
+    return inspections.reduce((acc: Record<string, number>, i: any) => {
       const vid = i.venueId || i.venue_id || i.venue;
       if (vid) acc[vid] = (acc[vid] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
-  }, [dbInspections]);
+  }, [inspections]);
   const [editingInspection, setEditingInspection] = useState<Inspection | null>(null);
   const [editingInspectionIndex, setEditingInspectionIndex] = useState<number | null>(null);
   const [currentInspectionId, setCurrentInspectionId] = useState<string | null>(null);
@@ -305,6 +251,15 @@ function AppContent() {
           console.warn('Failed to persist room selection for inspection:', e);
         }
       })();
+
+      // Ensure we set read-only based on the inspection's latest known status (prevent losing read-only when navigating between views)
+      try {
+        const insp = inspections.find(i => i.id === currentInspectionId);
+        setInspectionReadOnly(Boolean(insp && String(insp.status || '').toLowerCase() === 'completed'));
+      } catch (e) {
+        // If anything goes wrong, default to not read-only
+        setInspectionReadOnly(false);
+      }
     }
     
     setCurrentView('inspection');
@@ -390,12 +345,10 @@ function AppContent() {
         setCurrentView('confirmInspection');
         return;
       }
-      // If venue not found locally, refresh venues then set
-      fetchVenues().then(() => {
-        const vv = venues.find(x => x.id === vid);
-        if (vv) setSelectedVenue(vv);
-        setCurrentView('confirmInspection');
-      }).catch(() => setCurrentView('confirmInspection'));
+
+      // Venue not found locally: set pendingVenueId and continue to confirm screen. VenueList will fetch venues when opened.
+      setPendingVenueId(vid);
+      setCurrentView('confirmInspection');
     } else {
       setCurrentView('confirmInspection');
     }
@@ -484,6 +437,9 @@ function AppContent() {
 
     setCurrentInspectionId(id);
 
+    // set read-only flag when inspection is completed
+    setInspectionReadOnly((simpleInspection.status || '').toString().toLowerCase() === 'completed');
+
     // Find the venue
     const venue = venues.find(v => v.id === simpleInspection.venueId);
     if (venue) {
@@ -511,24 +467,9 @@ function AppContent() {
       return;
     }
 
-    // If venue not found, try to refresh venues and then set view
-    fetchVenues().then(() => {
-      const v = venues.find(vv => vv.id === simpleInspection.venueId);
-      if (v) {
-        setSelectedVenue(v);
-        if (simpleInspection.roomId) {
-          const room = v.rooms.find(r => r.id === simpleInspection.roomId);
-          if (room) {
-            setSelectedRoom(room);
-            setCurrentView('inspection');
-            return;
-          }
-        }
-        setCurrentView('rooms');
-        return;
-      }
-      setCurrentView('selectVenue');
-    }).catch(() => setCurrentView('selectVenue'));
+    // If venue not found locally, navigate to rooms and allow RoomList to fetch the venue when it mounts
+    setPendingVenueId(simpleInspection.venueId || null);
+    setCurrentView(simpleInspection.venueId ? 'rooms' : 'selectVenue');
   };
 
   const handleBackFromVenueSelect = () => {
@@ -551,6 +492,14 @@ function AppContent() {
   };
 
   const handleBackFromInspection = () => {
+    // When leaving inspection, preserve read-only if the inspection is completed according to the latest known inspection state
+    if (currentInspectionId) {
+      const insp = inspections.find(i => i.id === currentInspectionId);
+      setInspectionReadOnly(Boolean(insp && String(insp.status || '').toLowerCase() === 'completed'));
+    } else {
+      setInspectionReadOnly(false);
+    }
+
     if (selectedVenue) {
       setSelectedRoom(null);
       setCurrentView('rooms');
@@ -604,8 +553,7 @@ function AppContent() {
       // backend may return { message: 'Deleted' } or proxy { body }
       console.log('delete_venue response', data);
 
-      // Ensure server-side state is reflected
-      await fetchVenues();
+      // Server-side state already reflected via local update; VenueList will refresh when opened if needed.
     } catch (err) {
       console.error('Error deleting venue:', err);
       setVenues(originalVenues);
@@ -647,8 +595,7 @@ function AppContent() {
       } catch (e) { /* ignore */ }
     }
 
-    // Refresh venues from backend after save to pick up server-side state
-    fetchVenues().catch(err => console.warn('Failed to refresh venues after save', err));
+    // VenueList will refresh from backend when the Manage Venues screen is opened if necessary.
   };
 
   const handleEditInspection = (inspection: Inspection, index: number) => {
@@ -752,16 +699,19 @@ function AppContent() {
           onDeleteVenue={handleDeleteVenue}
           onBack={() => setCurrentView('home')}
           inspectionsCount={inspectionsCountMap}
+          onVenuesLoaded={(v) => setVenues(v)}
         />
       )}
 
-      {currentView === 'rooms' && selectedVenue && (
+      {currentView === 'rooms' && (
         <RoomList
-          venue={selectedVenue}
+          venue={selectedVenue || undefined}
+          venueId={selectedVenue ? undefined : pendingVenueId || undefined}
           onRoomSelect={handleRoomSelect}
           onBack={handleBackFromRooms}
           inspections={inspections}
           inspectionId={currentInspectionId}
+          onVenueLoaded={(v) => { setSelectedVenue(v); setPendingVenueId(null); }}
         />
       )}
 
@@ -773,6 +723,7 @@ function AppContent() {
           onSubmit={handleInspectionSubmit}
           onBack={handleBackFromInspection}
           existingInspection={editingInspection}
+          readOnly={inspectionReadOnly}
         />
       )}
 
@@ -802,6 +753,7 @@ function AppContent() {
           inspections={inspections}
           onBack={handleBackToHome}
           onDeleteInspection={handleDeleteInspectionById}
+          onResumeInspection={handleResumeInspection}
         />
       )}
     </div>

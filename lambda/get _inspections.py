@@ -111,10 +111,123 @@ def lambda_handler(event, context):
 
                 inspections.append(obj)
 
+            # Enrich each inspection with computed totals (pass/fail/na/pending/total) and updatedAt info
+            try:
+                insp_table = dynamodb.Table('Inspection')
+                client = boto3.client('dynamodb')
+                desc = client.describe_table(TableName='Inspection')
+                key_schema = desc.get('Table', {}).get('KeySchema', [])
+                pk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'HASH'), 'inspection_id')
+
+                from boto3.dynamodb.conditions import Key
+                for obj in inspections:
+                    try:
+                        iid = obj.get('inspection_id')
+                        if not iid:
+                            obj['totals'] = {'pass': 0, 'fail': 0, 'na': 0, 'pending': 0, 'total': 0}
+                            obj['byRoom'] = {}
+                            continue
+
+                        resp2 = insp_table.query(KeyConditionExpression=Key(pk_attr).eq(iid), ConsistentRead=True)
+                        items2 = resp2.get('Items', [])
+
+                        totals = {'pass': 0, 'fail': 0, 'na': 0, 'pending': 0, 'total': 0}
+                        by_room = {}
+                        latest_ts = None
+                        latest_by = None
+                        for it2 in items2:
+                            # ignore meta rows
+                            if 'sk' in it2 and it2.get('sk') == '__meta__':
+                                continue
+                            item_id = it2.get('itemId') or it2.get('item') or it2.get('ItemId')
+                            if not item_id:
+                                continue
+                            status = (it2.get('status') or 'pending').lower()
+                            rid = it2.get('roomId') or it2.get('room_id') or it2.get('room') or ''
+
+                            totals['total'] += 1
+                            if status == 'pass':
+                                totals['pass'] += 1
+                            elif status == 'fail':
+                                totals['fail'] += 1
+                            elif status == 'na':
+                                totals['na'] += 1
+                            else:
+                                totals['pending'] += 1
+
+                            if rid:
+                                br = by_room.setdefault(rid, {'pass': 0, 'fail': 0, 'na': 0, 'pending': 0, 'total': 0})
+                                br['total'] += 1
+                                if status == 'pass':
+                                    br['pass'] += 1
+                                elif status == 'fail':
+                                    br['fail'] += 1
+                                elif status == 'na':
+                                    br['na'] += 1
+                                else:
+                                    br['pending'] += 1
+
+                            ts_raw = it2.get('updatedAt') or it2.get('updated_at') or it2.get('createdAt') or it2.get('created_at')
+                            if ts_raw:
+                                dt = _parse_iso_to_aware(ts_raw)
+                                if dt:
+                                    ts = dt.isoformat()
+                                    if not latest_ts:
+                                        latest_ts = ts
+                                        latest_by = it2.get('inspectorName') or it2.get('createdBy') or it2.get('inspector_name') or it2.get('created_by') or None
+                                    else:
+                                        ldt = _parse_iso_to_aware(latest_ts)
+                                        if ldt is None or dt > ldt:
+                                            latest_ts = ts
+                                            latest_by = it2.get('inspectorName') or it2.get('createdBy') or it2.get('inspector_name') or it2.get('created_by') or None
+
+                        # Enrich totals with expected venue item counts and ensure per-room defaults (match RoomList.tsx behavior)
+                        try:
+                            venue_id = obj.get('venueId') or obj.get('venue_id') or None
+                            if venue_id:
+                                vtable = dynamodb.Table('VenueRoomData')
+                                vresp = vtable.get_item(Key={'venueId': venue_id})
+                                venue = vresp.get('Item') or {}
+                                rooms = venue.get('rooms') or []
+                                expected_total = sum(((r.get('items') or []) and len(r.get('items') or [])) or 0 for r in rooms)
+                                known = (totals.get('pass', 0) or 0) + (totals.get('fail', 0) or 0) + (totals.get('na', 0) or 0)
+                                totals['pending'] = max(0, expected_total - known)
+                                totals['total'] = known + totals['pending']
+
+                                # Ensure per-room entries exist and default missing rooms to pending=item count
+                                for r in rooms:
+                                    rid = r.get('roomId') or r.get('id')
+                                    if not rid:
+                                        continue
+                                    if not by_room.get(rid):
+                                        n = len(r.get('items') or [])
+                                        by_room[rid] = {'pass': 0, 'fail': 0, 'na': 0, 'pending': n, 'total': n}
+                        except Exception as e:
+                            print('Failed to enrich totals with venue data for inspection', obj.get('inspection_id'), e)
+
+                        obj['totals'] = totals
+                        obj['byRoom'] = by_room
+                        obj['updatedAt'] = latest_ts
+                        obj['updatedBy'] = latest_by
+                    except Exception as e:
+                        print('Failed to compute summary for inspection', obj.get('inspection_id'), e)
+            except Exception as e:
+                print('Failed to enrich inspections with summaries:', e)
+
+            # Partition inspections by status into ongoing and completed (status field determines grouping)
+            completed = []
+            ongoing = []
+            for obj in inspections:
+                st = (obj.get('status') or '').lower() if obj.get('status') else ''
+                if st == 'completed':
+                    completed.append(obj)
+                else:
+                    ongoing.append(obj)
+
             return {
                 'statusCode': 200,
                 'headers': CORS_HEADERS,
-                'body': json.dumps({'inspections': inspections})
+                'body': json.dumps({'inspections': inspections, 'completed': completed, 'ongoing': ongoing})
             }
 
         # GET_INSPECTION: return raw items for a given inspection id
@@ -237,7 +350,7 @@ def lambda_handler(event, context):
                 return {
                     'statusCode': 200,
                     'headers': CORS_HEADERS,
-                    'body': json.dumps({'inspection_id': inspection_id, 'totals': totals, 'byRoom': by_room, 'lastUpdated': latest_ts, 'lastUpdatedBy': latest_by})
+                    'body': json.dumps({'inspection_id': inspection_id, 'totals': totals, 'byRoom': by_room, 'updatedAt': latest_ts, 'updatedBy': latest_by})
                 }
             except Exception as e:
                 print('Failed to compute inspection summary in get_inspections:', e)

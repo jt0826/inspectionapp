@@ -11,6 +11,8 @@ export async function getInspectionSummary(inspectionId: string) {
     });
 
     const text = await res.text().catch(() => '');
+    console.log('[API][getInspectionSummary] rawText:', text);
+
 
     if (!res.ok) {
       // If the endpoint explicitly does not support this action, fallback to computing the summary from raw items
@@ -33,12 +35,17 @@ export async function getInspectionSummary(inspectionId: string) {
     let data: any = null;
     try { data = text ? JSON.parse(text) : await res.json(); } catch (e) { try { data = await res.json(); } catch (_) { data = null; } }
     const body = data?.body ? (typeof data.body === 'string' ? JSON.parse(data.body) : data.body) : data;
+    console.log('[API][getInspectionSummary] parsedData:', data);
+    console.log('[API][getInspectionSummary] body:', body);
+
 
     // If service did not return a usable summary, compute it from raw items as a fallback
     if (!body || (!body.totals && !body.byRoom)) {
       const items = await getInspectionItems(inspectionId);
+      console.log('[API][getInspectionSummary] fallback items:', items);
       if (items && Array.isArray(items)) {
         const summary = computeSummaryFromItems(items);
+        console.log('[API][getInspectionSummary] computed summary from items:', summary);
         return { ...(body || {}), ...summary } as any;
       }
     }
@@ -51,6 +58,7 @@ export async function getInspectionSummary(inspectionId: string) {
 }
 
 function computeSummaryFromItems(items: any[]) {
+  console.log('[computeSummaryFromItems] items:', items);
   const totals: any = { pass: 0, fail: 0, na: 0, pending: 0, total: 0 };
   const byRoom: Record<string, any> = {};
   let latestTs: string | null = null;
@@ -68,6 +76,7 @@ function computeSummaryFromItems(items: any[]) {
     else if (status === 'na') totals.na++;
     else totals.pending++;
 
+    // By room breakdown
     const rid = String(it?.roomId || it?.room_id || it?.room || '');
     const br = byRoom[rid] || (byRoom[rid] = { pass: 0, fail: 0, na: 0, pending: 0, total: 0 });
     br.total += 1;
@@ -84,7 +93,8 @@ function computeSummaryFromItems(items: any[]) {
     }
   }
 
-  return { totals, byRoom, lastUpdated: latestTs, lastUpdatedBy: latestBy };
+  console.log('[computeSummaryFromItems] totals:', totals, 'byRoom:', byRoom, 'updatedAt:', latestTs, 'updatedBy:', latestBy);
+  return { totals, byRoom, updatedAt: latestTs, updatedBy: latestBy };
 }
 
 export async function checkInspectionComplete(inspectionId: string, venueId: string) {
@@ -162,8 +172,10 @@ export async function getInspections() {
     });
 
     const text = await res.text().catch(() => '');
+    console.log('[API][getInspections] rawText:', text);
     let data: any = null;
-    try { data = text ? JSON.parse(text) : null; } catch (e) { try { data = await res.json(); } catch (_) { data = null; } }
+    try { data = text ? JSON.parse(text) : null; } catch (e) { try { data = await res.json(); } catch (e) { data = null; } }
+    console.log('[API][getInspections] parsedData:', data);
 
     let items: any[] = [];
     if (Array.isArray(data?.inspections)) items = data.inspections;
@@ -177,10 +189,37 @@ export async function getInspections() {
       }
     }
 
+    console.log('[API][getInspections] items:', items);
     return items;
   } catch (e) {
     console.warn('getInspections failed', e);
     return [];
+  }
+}
+
+// New helper: return the parsed body from list_inspections including any server-provided partitions like 'completed'/'ongoing'
+export async function getInspectionsPartitioned() {
+  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-query';
+  try {
+    const res = await fetch(API_BASE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'list_inspections' }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      console.warn('getInspectionsPartitioned non-ok', res.status, text, API_BASE);
+      return null;
+    }
+
+    const data = await res.json();
+    const body = data.body ? (typeof data.body === 'string' ? JSON.parse(data.body) : data.body) : data;
+    // body may contain: inspections, completed, ongoing
+    return body;
+  } catch (e) {
+    console.warn('getInspectionsPartitioned failed', e);
+    return null;
   }
 }
 
@@ -201,8 +240,11 @@ export async function getInspectionItems(inspectionId: string) {
     }
 
     const data = await res.json();
+    console.log('[API][getInspectionItems] raw data:', data);
     const body = data.body ? (typeof data.body === 'string' ? JSON.parse(data.body) : data.body) : data;
+    console.log('[API][getInspectionItems] parsed body:', body);
     const items = body.items || [];
+    console.log('[API][getInspectionItems] items:', items);
     return items;
   } catch (e) {
     console.warn('getInspectionItems failed', e);

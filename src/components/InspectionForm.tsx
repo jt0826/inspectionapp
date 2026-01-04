@@ -12,6 +12,7 @@ interface InspectionFormProps {
   onSubmit: (inspection: Inspection) => void;
   existingInspection?: Inspection | null;
   inspectionId?: string;
+  readOnly?: boolean;
 }
 
 const defaultInspectionItems: Omit<InspectionItem, 'status' | 'notes' | 'photos'>[] = [
@@ -34,7 +35,7 @@ const defaultInspectionItems: Omit<InspectionItem, 'status' | 'notes' | 'photos'
 
 const makePhotoId = () => 'ph_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,9);
 
-export function InspectionForm({ venue, room, onBack, onSubmit, existingInspection, inspectionId }: InspectionFormProps) {
+export function InspectionForm({ venue, room, onBack, onSubmit, existingInspection, inspectionId, readOnly = false }: InspectionFormProps) {
   const { user } = useAuth();
 
   const [inspectionItems, setInspectionItems] = useState<InspectionItem[]>(() => {
@@ -69,6 +70,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
     id: string,
     updates: Partial<Pick<InspectionItem, 'status' | 'notes' | 'photos'>>
   ) => {
+    if (readOnly) return; // no-op in read-only mode
     setInspectionItems((prev) => {
       const updated = prev.map((item) => (item.id === id ? { ...item, ...updates } : item));
       return updated;
@@ -336,6 +338,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
   // Items no longer have categories; render a flat list
 
   const handlePhotoUpload = (id: string, file: File) => {
+    if (readOnly) return; // No uploads in read-only mode
     // Accept file and create a preview; actual upload will occur on Save
     const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
     if (file.size > MAX_BYTES) {
@@ -383,6 +386,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
   };
 
   const removePhoto = async (id: string, index: number) => {
+    if (readOnly) return; // No deletes in read-only mode
     const currentPhotos = inspectionItems.find(i => i.id === id)?.photos || [];
     const toRemove = currentPhotos[index];
 
@@ -502,34 +506,37 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                       {/* Status Buttons */}
                       <div className="flex gap-2 mb-3">
                         <button
-                          onClick={() => updateItem(item.id, { status: 'pass' })}
-                          className={`flex-1 py-2 px-3 rounded-lg border transition-colors flex items-center justify-center gap-2 ${
-                            item.status === 'pass'
-                              ? 'bg-green-500 text-white border-green-600'
-                              : 'bg-white text-gray-700 border-gray-300 hover:border-green-500'
-                          }`}
+                        onClick={() => { if (!readOnly) updateItem(item.id, { status: 'pass' }); }}
+                        disabled={readOnly}
+                        className={`flex-1 py-2 px-3 rounded-lg border transition-colors flex items-center justify-center gap-2 ${
+                          item.status === 'pass'
+                            ? 'bg-green-500 text-white border-green-600'
+                            : 'bg-white text-gray-700 border-gray-300 hover:border-green-500'
+                        } ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
                         >
                           <CheckCircle2 className="w-4 h-4" />
                           <span>Pass</span>
                         </button>
                         <button
-                          onClick={() => updateItem(item.id, { status: 'fail' })}
+                          onClick={() => { if (!readOnly) updateItem(item.id, { status: 'fail' }); }}
+                          disabled={readOnly}
                           className={`flex-1 py-2 px-3 rounded-lg border transition-colors flex items-center justify-center gap-2 ${
                             item.status === 'fail'
                               ? 'bg-red-500 text-white border-red-600'
                               : 'bg-white text-gray-700 border-gray-300 hover:border-red-500'
-                          }`}
+                          } ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
                         >
                           <XCircle className="w-4 h-4" />
                           <span>Fail</span>
                         </button>
                         <button
-                          onClick={() => updateItem(item.id, { status: 'na' })}
+                          onClick={() => { if (!readOnly) updateItem(item.id, { status: 'na' }); }}
+                          disabled={readOnly}
                           className={`flex-1 py-2 px-3 rounded-lg border transition-colors flex items-center justify-center gap-2 ${
                             item.status === 'na'
                               ? 'bg-gray-500 text-white border-gray-600'
                               : 'bg-white text-gray-700 border-gray-300 hover:border-gray-500'
-                          }`}
+                          } ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
                         >
                           <MinusCircle className="w-4 h-4" />
                           <span>N/A</span>
@@ -539,10 +546,11 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                       {/* Notes */}
                       <textarea
                         value={item.notes}
-                        onChange={(e) => updateItem(item.id, { notes: e.target.value })}
+                        onChange={(e) => { if (!readOnly) updateItem(item.id, { notes: e.target.value }); }}
                         placeholder="Add notes (optional)"
-                        className="w-full p-2 border border-gray-300 rounded text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
+                        className={`w-full p-2 border border-gray-300 rounded text-sm resize-none ${readOnly ? 'bg-gray-100 text-gray-600' : 'focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900'}`}
                         rows={2}
+                        readOnly={readOnly}
                       />
 
                       {/* Photo Upload */}
@@ -566,58 +574,64 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                                     height={80}
                                     className="w-full h-20 object-cover rounded border border-gray-300"
                                   />
-                                  <button
-                                    type="button"
-                                    aria-label="Remove photo"
-                                    onClick={() => removePhoto(item.id, photoIndex)}
-                                    className="absolute top-2 right-2 bg-red-600 text-white rounded-full p-2 shadow-md focus:outline-none touch-manipulation"
-                                  >
-                                    <X className="w-3 h-3" />
-                                  </button>
+                                  {!readOnly && (
+                                    <button
+                                      type="button"
+                                      aria-label="Remove photo"
+                                      onClick={() => removePhoto(item.id, photoIndex)}
+                                      className="absolute top-2 right-2 bg-red-600 text-white rounded-full p-2 shadow-md focus:outline-none touch-manipulation"
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  )}
                                 </div>
                               );
                             })}
                           </div>
                         )}
                         
-                        {/* Upload Button */}
-                        <label className="flex items-center justify-center gap-2 py-2 px-3 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors cursor-pointer text-sm text-gray-600">
-                          <Camera className="w-4 h-4" />
-                          <span>Take Photo / Upload</span>
-                          <input
-                            type="file"
-                            accept="image/*"
-                            capture="environment"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) {
-                                handlePhotoUpload(item.id, file);
-                                e.target.value = '';
-                              }
-                            }}
-                            className="hidden"
-                          />
-                        </label>
+                        {/* Upload Button (hidden in read-only) */}
+                        {!readOnly && (
+                          <label className="flex items-center justify-center gap-2 py-2 px-3 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors cursor-pointer text-sm text-gray-600">
+                            <Camera className="w-4 h-4" />
+                            <span>Take Photo / Upload</span>
+                            <input
+                              type="file"
+                              accept="image/*"
+                              capture="environment"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) {
+                                  handlePhotoUpload(item.id, file);
+                                  e.target.value = '';
+                                }
+                              }}
+                              className="hidden"
+                            />
+                          </label>
+                        )}
                       </div>
                     </div>
                   ))}
         </div>
 
-        {/* Fixed Bottom Button */}
-        <div className="fixed bottom-0 left-0 right-0 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] bg-white border-t max-w-md mx-auto">
-          <button
-            onClick={handleSubmit}
-            disabled={completedCount === 0 || saving}
-            className={`w-full py-3 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors ${
-              completedCount === 0
-                ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                : 'bg-blue-600 text-white hover:bg-blue-700'
-            }`}
-          >
-            <Save className="w-5 h-5" />
-            <span>{existingInspection ? 'Update Inspection' : 'Save Inspection'}</span>
-          </button>
-        </div>
+        {/* Fixed Bottom Button (hidden in read-only) */}
+        {!readOnly && (
+          <div className="fixed bottom-0 left-0 right-0 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] bg-white border-t max-w-md mx-auto">
+            <button
+              onClick={handleSubmit}
+              disabled={completedCount === 0 || saving}
+              className={`w-full py-3 px-4 rounded-lg flex items-center justify-center gap-2 transition-colors ${
+                completedCount === 0
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  : 'bg-blue-600 text-white hover:bg-blue-700'
+              }`}
+            >
+              <Save className="w-5 h-5" />
+              <span>{existingInspection ? 'Update Inspection' : 'Save Inspection'}</span>
+            </button>
+          </div>
+        )}
 
 
       </div>

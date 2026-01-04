@@ -16,6 +16,28 @@ interface VenueSelectionProps {
 
 export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectionId, isCreatingNewInspection, onInspectionCreated }: VenueSelectionProps) {
   const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
+  const [localVenues, setLocalVenues] = useState<Venue[]>(venues || []);
+
+  // If parent didn't provide venues, load them on mount so selection is available
+  React.useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (venues && venues.length > 0) {
+        setLocalVenues(venues);
+        return;
+      }
+      try {
+        const { getVenues } = await import('../utils/venueApi');
+        const items = await getVenues();
+        if (cancelled) return;
+        const mapped = items.map((v: any) => ({ id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || new Date().toISOString(), updatedAt: v.updatedAt || v.createdAt || new Date().toISOString(), createdBy: v.createdBy || '' }));
+        setLocalVenues(mapped);
+      } catch (e) {
+        console.warn('Failed to load venues for selection', e);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   const handleVenueClick = (venue: Venue) => {
     if (selectedVenue?.id === venue.id) {
@@ -108,14 +130,14 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
 
         {/* Venues List */}
         <div className="p-4 lg:p-6">
-          {venues.length === 0 ? (
+          {localVenues.length === 0 ? (
             <div className="text-center py-12 lg:py-16 text-gray-500">
               <Building2 className="w-12 h-12 lg:w-16 lg:h-16 mx-auto mb-4 text-gray-400" />
               <p className="text-sm lg:text-base">No venues available</p>
             </div>
           ) : (
             <div className="space-y-4">
-              {venues.map((venue) => {
+              {localVenues.map((venue) => {
                 const isSelected = selectedVenue?.id === venue.id;
                 
                 return (
