@@ -315,6 +315,29 @@ export async function getInspectionsPartitioned() {
   }
 }
 
+// Small helper to retrieve server-side dashboard metrics (authoritative)
+export async function getDashboardMetrics(days?: number) {
+  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/dashboard';
+  try {
+    const res = await fetch(API_BASE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ days: days || 7 }),
+    });
+    if (!res.ok) {
+      const txt = await res.text().catch(() => '');
+      console.warn('getDashboardMetrics non-ok', res.status, txt, API_BASE);
+      return null;
+    }
+    const data = await res.json();
+    const body = data.body ? (typeof data.body === 'string' ? JSON.parse(data.body) : data.body) : data;
+    return body;
+  } catch (e) {
+    console.warn('getDashboardMetrics failed', e);
+    return null;
+  }
+} 
+
 export async function getInspectionItems(inspectionId: string) {
   if (!inspectionId) return null;
   // Use consolidated inspections query endpoint to fetch inspection items

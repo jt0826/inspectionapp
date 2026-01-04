@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, CheckCircle2, XCircle, MinusCircle, Save, Camera, X } from 'lucide-react';
 import { Venue, Room, InspectionItem, Inspection } from '../App';
 import { useAuth } from '../contexts/AuthContext';
-import { getInspectionItems } from '../utils/inspectionApi';
+import { getInspectionItems, getInspections } from '../utils/inspectionApi';
 import { useToast } from './ToastProvider';
 
 interface InspectionFormProps {
@@ -47,6 +47,12 @@ const normalizeItem = (it: any): InspectionItem => ({
 export function InspectionForm({ venue, room, onBack, onSubmit, existingInspection, inspectionId, readOnly = false }: InspectionFormProps) {
   const { user } = useAuth();
 
+  // Server-driven read-only state (for inspectionId-only flows)
+  const [serverReadOnly, setServerReadOnly] = useState<boolean>(false);
+
+  // Read-only when explicitly requested OR when the inspection is already completed
+  const isReadOnly = Boolean(readOnly || (existingInspection && ((existingInspection.status && String(existingInspection.status).toLowerCase() === 'completed') || (existingInspection as any).completedAt)) || serverReadOnly);
+
   const [inspectionItems, setInspectionItems] = useState<InspectionItem[]>(() => {
     // If editing an existing inspection, use its items (normalized to ensure stable ids)
     if (existingInspection && existingInspection.items.length > 0) {
@@ -79,7 +85,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
     id: string,
     updates: Partial<Pick<InspectionItem, 'status' | 'notes' | 'photos'>>
   ) => {
-    if (readOnly) return; // no-op in read-only mode
+    if (isReadOnly) return; // no-op in read-only mode
     setInspectionItems((prev) => {
       const updated = prev.map((item) => (item.id === id ? { ...item, ...updates } : item));
       return updated;
@@ -109,6 +115,26 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
     // Otherwise, if an inspectionId exists (resuming), fetch saved items for this inspection + room
     const loadSaved = async () => {
       if (!inspectionId) return;
+
+      // Also check the inspection metadata from the server to derive read-only status
+      try {
+        const list = await getInspections();
+        if (Array.isArray(list)) {
+          const found = list.find((i: any) => (i.inspection_id || i.id) === inspectionId || i.id === inspectionId);
+          if (found) {
+            const s = (found.status || '') as string;
+            if (s && s.toString().toLowerCase() === 'completed') {
+              setServerReadOnly(true);
+            } else if ((found as any).completedAt || (found as any).completed_at) {
+              setServerReadOnly(true);
+            }
+          }
+        }
+      } catch (e) {
+        // ignore failures to fetch metadata - fallback behavior remains
+        // console.warn('Failed to fetch inspections metadata for read-only check', e);
+      }
+
       try {
         let items = await getInspectionItems(inspectionId);
         if (!items) return;
@@ -347,7 +373,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
   // Items no longer have categories; render a flat list
 
   const handlePhotoUpload = (id: string, file: File) => {
-    if (readOnly) return; // No uploads in read-only mode
+    if (isReadOnly) return; // No uploads in read-only mode
     // Accept file and create a preview; actual upload will occur on Save
     const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
     if (file.size > MAX_BYTES) {
@@ -395,7 +421,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
   };
 
   const removePhoto = async (id: string, index: number) => {
-    if (readOnly) return; // No deletes in read-only mode
+    if (isReadOnly) return; // No deletes in read-only mode
     const currentPhotos = inspectionItems.find(i => i.id === id)?.photos || [];
     const toRemove = currentPhotos[index];
 
@@ -473,9 +499,9 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
           </p>
           {existingInspection && (
             <p className="text-blue-200 text-sm mt-1">
-              {existingInspection.items.every(i => i.status === null || defaultInspectionItems.find(t => t.id === i.id)?.item !== i.item)
+              {isReadOnly ? 'Completed inspection (read-only)' : (existingInspection.items.every(i => i.status === null || defaultInspectionItems.find(t => t.id === i.id)?.item !== i.item)
                 ? 'Re-inspection (Failed Items Only)'
-                : 'Editing existing inspection'}
+                : 'Editing existing inspection')}
             </p>
           )}
         </div>
@@ -515,37 +541,37 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                       {/* Status Buttons */}
                       <div className="flex gap-2 mb-3">
                         <button
-                        onClick={() => { if (!readOnly) updateItem(item.id, { status: 'pass' }); }}
-                        disabled={readOnly}
+                        onClick={() => { if (!isReadOnly) updateItem(item.id, { status: 'pass' }); }}
+                        disabled={isReadOnly}
                         className={`flex-1 py-2 px-3 rounded-lg border transition-colors flex items-center justify-center gap-2 ${
                           item.status === 'pass'
                             ? 'bg-green-500 text-white border-green-600'
                             : 'bg-white text-gray-700 border-gray-300 hover:border-green-500'
-                        } ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
+                        } ${isReadOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
                         >
                           <CheckCircle2 className="w-4 h-4" />
                           <span>Pass</span>
                         </button>
                         <button
-                          onClick={() => { if (!readOnly) updateItem(item.id, { status: 'fail' }); }}
-                          disabled={readOnly}
+                          onClick={() => { if (!isReadOnly) updateItem(item.id, { status: 'fail' }); }}
+                          disabled={isReadOnly}
                           className={`flex-1 py-2 px-3 rounded-lg border transition-colors flex items-center justify-center gap-2 ${
                             item.status === 'fail'
                               ? 'bg-red-500 text-white border-red-600'
                               : 'bg-white text-gray-700 border-gray-300 hover:border-red-500'
-                          } ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
+                          } ${isReadOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
                         >
                           <XCircle className="w-4 h-4" />
                           <span>Fail</span>
                         </button>
                         <button
-                          onClick={() => { if (!readOnly) updateItem(item.id, { status: 'na' }); }}
-                          disabled={readOnly}
+                          onClick={() => { if (!isReadOnly) updateItem(item.id, { status: 'na' }); }}
+                          disabled={isReadOnly}
                           className={`flex-1 py-2 px-3 rounded-lg border transition-colors flex items-center justify-center gap-2 ${
                             item.status === 'na'
                               ? 'bg-gray-500 text-white border-gray-600'
                               : 'bg-white text-gray-700 border-gray-300 hover:border-gray-500'
-                          } ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
+                          } ${isReadOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
                         >
                           <MinusCircle className="w-4 h-4" />
                           <span>N/A</span>
@@ -555,11 +581,11 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                       {/* Notes */}
                       <textarea
                         value={item.notes}
-                        onChange={(e) => { if (!readOnly) updateItem(item.id, { notes: e.target.value }); }}
+                        onChange={(e) => { if (!isReadOnly) updateItem(item.id, { notes: e.target.value }); }}
                         placeholder="Add notes (optional)"
-                        className={`w-full p-2 border border-gray-300 rounded text-sm resize-none ${readOnly ? 'bg-gray-100 text-gray-600' : 'focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900'}`}
+                        className={`w-full p-2 border border-gray-300 rounded text-sm resize-none ${isReadOnly ? 'bg-gray-100 text-gray-600' : 'focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900'}`}
                         rows={2}
-                        readOnly={readOnly}
+                        readOnly={isReadOnly}
                       />
 
                       {/* Photo Upload */}
@@ -583,7 +609,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                                     height={80}
                                     className="w-full h-20 object-cover rounded border border-gray-300"
                                   />
-                                  {!readOnly && (
+                                  {!isReadOnly && (
                                     <button
                                       type="button"
                                       aria-label="Remove photo"
@@ -600,10 +626,10 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                         )}
                         
                         {/* Upload Button (hidden in read-only) */}
-                        {!readOnly && (
+                        {!isReadOnly && (
                           <div className="flex items-center gap-2">
                             {/* Take Photo (camera capture) */}
-                            <label className="flex items-center justify-center gap-2 py-2 px-3 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors cursor-pointer text-sm text-gray-600">
+                            <label className={`flex items-center justify-center gap-2 py-2 px-3 border-2 border-dashed border-gray-300 rounded-lg ${isReadOnly ? 'opacity-70 cursor-not-allowed' : 'hover:border-blue-500 hover:bg-blue-50'} transition-colors cursor-pointer text-sm text-gray-600`}>
                               <Camera className="w-4 h-4" />
                               <span>Take Photo</span>
                               <input
@@ -648,7 +674,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
         </div>
 
         {/* Fixed Bottom Button (hidden in read-only) */}
-        {!readOnly && (
+        {!isReadOnly && (
           <div className="fixed bottom-0 left-0 right-0 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] bg-white border-t max-w-md mx-auto">
             <button
               onClick={handleSubmit}
