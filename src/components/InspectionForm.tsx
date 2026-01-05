@@ -239,7 +239,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                 const resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/list-images-db', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ inspectionId: inspectionId, roomId: room.id })
+                  body: JSON.stringify({ inspectionId: inspectionId, roomId: room.id, signed: true })
                 });
                 if (!resp.ok) {
                   console.warn('Failed to fetch images from DB:', resp.status);
@@ -255,10 +255,11 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                     const existing = it.photos || [];
                     const imgsForItem = images.filter((img) => String(img.itemId) === String(it.id));
                     const newPhotos = imgsForItem.map((img) => ({
-                      id: 's3_' + ((img.s3Key || img.publicUrl || img.filename) || '').replace(/[^a-zA-Z0-9_-]/g, '_'),
+                      id: 's3_' + ((img.s3Key || img.filename) || '').replace(/[^a-zA-Z0-9_-]/g, '_'),
                       imageId: img.imageId || null,
                       s3Key: img.s3Key,
-                      preview: img.publicUrl, // public S3 URL
+                      // Only allow retrieval via CloudFront signed URL
+                      preview: img.cloudfrontSignedUrl || null,
                       filename: img.filename,
                       contentType: img.contentType,
                       filesize: img.filesize,
@@ -371,11 +372,12 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
               const reg = await registerResp.json();
 
               // replace photo entry with registered metadata
+              // Preserve local blob preview (p.preview) when server does not return a preview URL
               updatedPhotos[pi] = {
                 id: p.id,
                 imageId: reg.imageId || reg.item?.imageId || null,
                 s3Key: reg.item?.s3Key || key,
-                preview: reg.previewUrl || null,
+                preview: reg.previewUrl || p.preview || null,
                 filename: p.filename,
                 contentType: p.contentType,
                 filesize: p.filesize,
@@ -518,7 +520,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
       const resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/list-images-db', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inspectionId: inspectionId, roomId: room.id, itemId })
+        body: JSON.stringify({ inspectionId: inspectionId, roomId: room.id, signed: true })
       });
       if (!resp.ok) {
         console.warn('Failed to fetch images for item:', resp.status);
@@ -530,7 +532,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
         id: 's3_' + ((img.s3Key || img.publicUrl || img.filename) || '').replace(/[^a-zA-Z0-9_-]/g, '_'),
         imageId: img.imageId,
         s3Key: img.s3Key,
-        preview: img.publicUrl,
+        preview: img.cloudfrontSignedUrl || null,
         filename: img.filename,
         contentType: img.contentType,
         filesize: img.filesize,
@@ -765,7 +767,17 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                         {item.photos.length > 0 && (
                           <div className="grid grid-cols-3 gap-2 mb-2">
                             {item.photos.map((photo: any, photoIndex: number) => {
-                              const src = typeof photo === 'string' ? photo : (photo.preview || photo.previewUrl || '');
+                              // Show local blob previews for newly selected files, otherwise use CloudFront-signed URL
+                              let src: string | null = null;
+                              if (typeof photo === 'string') {
+                                src = photo;
+                              } else if (photo && (photo.file || (photo.preview && typeof photo.preview === 'string' && photo.preview.startsWith('blob:')))) {
+                                src = photo.preview;
+                              } else {
+                                // DB-provided images may have `preview` set to a signed URL (or cloudfrontSignedUrl)
+                                src = (photo && photo.preview) || photo?.cloudfrontSignedUrl || null;
+                              }
+                              if (!src) return null;
                               const photoKey = photo?.imageId ? `img_${photo.imageId}` : (photo?.id ? `img_${photo.id}` : `img_${photoIndex}`);
                               return (
                                 <div key={photoKey} className="relative group">
@@ -775,12 +787,17 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                                     width={80}
                                     height={80}
                                     onClick={() => {
-                                      const imgs = (item.photos || []).map((p: any) => (typeof p === 'string' ? p : (p.preview || p.previewUrl || p.publicUrl || '')));
-                                      openLightbox(imgs, photoIndex);
+                                      const imgs = (item.photos || []).map((p: any) => {
+                                        if (typeof p === 'string') return p;
+                                        if (p && (p.file || (p.preview && typeof p.preview === 'string' && p.preview.startsWith('blob:')))) return p.preview;
+                                        // prefer preview (may contain signed URL) then cloudfrontSignedUrl
+                                        return p.preview || p.cloudfrontSignedUrl || null;
+                                      }).filter(Boolean);
+                                      openLightbox(imgs, imgs.indexOf(src));
                                     }}
                                     role="button"
                                     tabIndex={0}
-                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { const imgs = (item.photos || []).map((p: any) => (typeof p === 'string' ? p : (p.preview || p.previewUrl || p.publicUrl || ''))); openLightbox(imgs, photoIndex); } }}
+                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { const imgs = (item.photos || []).map((p: any) => { if (typeof p === 'string') return p; if (p && (p.file || (p.preview && typeof p.preview === 'string' && p.preview.startsWith('blob:')))) return p.preview; return p.preview || p.cloudfrontSignedUrl || null; }).filter(Boolean); openLightbox(imgs, imgs.indexOf(src)); } }}
                                     className="cursor-pointer w-full h-20 object-contain object-center rounded border border-gray-300 bg-gray-100 p-0.5"
                                   />
                                   {!isReadOnly && (

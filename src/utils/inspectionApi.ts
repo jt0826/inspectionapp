@@ -113,7 +113,7 @@ export async function listImagesForInspection(inspectionId: string) {
         const resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/list-images-db', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ inspectionId, roomId }),
+          body: JSON.stringify({ inspectionId, roomId, signed: true }),
         });
         if (!resp.ok) {
           const text = await resp.text().catch(() => '');

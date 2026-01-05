@@ -84,10 +84,8 @@ def lambda_handler(event, context):
         }
         table.put_item(Item=item)
 
-        # Generate a presigned GET for immediate preview (short-lived)
-        get_url = s3.generate_presigned_url('get_object', Params={'Bucket': BUCKET_NAME, 'Key': key}, ExpiresIn=3600)
-
-        return build_response(200, {'message': 'Registered', 'imageId': image_id, 'previewUrl': get_url, 'item': item})
+        # Do not return presigned GET URLs; retrieval must be via signed CloudFront URLs only
+        return build_response(200, {'message': 'Registered', 'imageId': image_id, 'item': item})
 
     except Exception as e:
         print('Error in register_image:', e)
