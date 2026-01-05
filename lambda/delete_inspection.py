@@ -5,7 +5,7 @@ from boto3.dynamodb.conditions import Key
 # Config
 IMAGE_TABLE = 'InspectionImages'
 DATA_TABLE = 'InspectionData'
-BUCKET_NAME = 'testapp2608'
+BUCKET_NAME = 'inspectionappimages'
 REGION = 'ap-southeast-1'
 
 s3 = boto3.client('s3', region_name=REGION)

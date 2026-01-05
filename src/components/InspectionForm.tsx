@@ -325,12 +325,30 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
               });
               if (!signResp.ok) throw new Error('Failed to obtain signed URL');
               const signData = await signResp.json();
-              const uploadUrl = signData.uploadUrl;
               const key = signData.key;
 
-              // upload to s3
-              const putResp = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': p.contentType }, body: p.file });
-              if (!putResp.ok) throw new Error('Failed to upload to S3');
+              // POST using presigned form if provided (avoids preflight)
+              if (signData.post && signData.post.url && signData.post.fields) {
+                const form = new FormData();
+                Object.entries(signData.post.fields).forEach(([k, v]) => {
+                  form.append(k, v as any);
+                });
+                form.append('file', p.file as Blob);
+
+                const postResp = await fetch(signData.post.url, { method: 'POST', body: form });
+                if (!(postResp.ok || postResp.status === 204 || postResp.status === 201)) throw new Error('Failed to upload to S3 via POST');
+
+                // slight delay for consistency
+                await new Promise(resolve => setTimeout(resolve, 500));
+              } else if (signData.uploadUrl) {
+                // fallback to old PUT flow if backend returns uploadUrl
+                const uploadUrl = signData.uploadUrl;
+                const putResp = await fetch(uploadUrl, { method: 'PUT', headers: { 'Content-Type': p.contentType }, body: p.file });
+                if (!putResp.ok) throw new Error('Failed to upload to S3');
+                await new Promise(resolve => setTimeout(resolve, 500));
+              } else {
+                throw new Error('Signing response missing upload instructions');
+              }
               await new Promise(resolve => setTimeout(resolve, 500)); // slight delay to ensure S3 consistency
 
               // register metadata

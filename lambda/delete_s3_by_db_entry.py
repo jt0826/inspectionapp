@@ -5,7 +5,7 @@ from boto3.dynamodb.conditions import Key, Attr
 
 # Config
 TABLE_NAME = 'InspectionImages'
-BUCKET_NAME = 'testapp2608'
+BUCKET_NAME = 'inspectionappimages'
 REGION = 'ap-southeast-1'
 
 CORS_HEADERS = {

@@ -5,7 +5,7 @@ import boto3
 from datetime import datetime, timezone, timedelta
 
 # Config
-BUCKET_NAME = 'testapp2608'
+BUCKET_NAME = 'inspectionappimages'
 REGION = 'ap-southeast-1'
 TABLE_NAME = 'InspectionImages'
 

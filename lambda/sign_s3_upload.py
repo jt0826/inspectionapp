@@ -5,14 +5,14 @@ import boto3
 from datetime import datetime, timezone, timedelta
 
 # Configuration
-BUCKET_NAME = 'testapp2608'  # placeholder specified
+BUCKET_NAME = 'inspectionappimages'  # placeholder specified
 REGION = 'ap-southeast-1'
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Headers': 'Content-Type,Authorization',
-    'Access-Control-Allow-Methods': 'OPTIONS,POST,PUT',
+    'Access-Control-Allow-Methods': 'OPTIONS,POST,PUT,GET',
     'Content-Type': 'application/json, image/png'
 }
 
@@ -65,15 +65,18 @@ def lambda_handler(event, context):
             ext = '.' + filename.split('.')[-1]
         key = f"images/{inspection_id}/{venue_id}/{room_id}/{item_id}/{ts}-{suffix}{ext}"
 
-        # Generate presigned PUT URL
-        params = {
-            'Bucket': BUCKET_NAME,
-            'Key': key,
-            'ContentType': content_type
-        }
-        url = s3.generate_presigned_url('put_object', Params=params, ExpiresIn=300)
+        # Generate presigned POST (form) to avoid CORS preflight issues
+        # Allow up to MAX_FILE_SIZE bytes via a content-length-range condition
+        post = s3.generate_presigned_post(
+            Bucket=BUCKET_NAME,
+            Key=key,
+            Fields={},
+            Conditions=[['content-length-range', 1, MAX_FILE_SIZE]],
+            ExpiresIn=300
+        )
 
-        return build_response(200, { 'uploadUrl': url, 'key': key, 'expiresIn': 300 })
+        # post contains { url, fields }
+        return build_response(200, { 'post': post, 'key': key, 'expiresIn': 300 })
 
     except Exception as e:
         print('Error in sign_s3_upload:', e)
