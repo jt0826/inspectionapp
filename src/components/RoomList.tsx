@@ -1,5 +1,6 @@
 import React from 'react';
 import { ArrowLeft, CheckCircle2, XCircle, MinusCircle, Clock } from 'lucide-react';
+import NumberFlow from '@number-flow/react';
 import { Venue, Room, Inspection } from '@/App';
 import { useEffect, useState } from 'react';
 import { getInspectionsPartitioned } from '../utils/inspectionApi';
@@ -188,7 +189,7 @@ export function RoomList({ venue: propVenue, venueId, onRoomSelect, onBack, insp
         <div className="p-4 lg:p-6 bg-gray-50 border-b">
           <div className="flex items-center justify-between mb-2 lg:mb-3">
             <span className="text-gray-700 text-sm lg:text-base">Progress</span>
-            <div className="text-gray-900 text-sm lg:text-base">{inspectedCount} / {venue!.rooms.length}</div>
+            <div className="text-gray-900 text-sm lg:text-base"><NumberFlow value={inspectedCount ?? null} className="inline-block" /> / <NumberFlow value={venue!.rooms.length ?? null} className="inline-block" /></div>
           </div>
 
           <div className="w-full bg-gray-200 rounded-full h-2 lg:h-3 mb-3">
@@ -203,19 +204,19 @@ export function RoomList({ venue: propVenue, venueId, onRoomSelect, onBack, insp
             <div className="flex gap-4 text-sm">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="w-4 h-4 text-green-600" />
-                <span className="text-gray-700">Pass: {effectiveTotals.pass}</span>
+                <span className="text-gray-700">Pass: <NumberFlow value={effectiveTotals.pass ?? null} className="inline-block" /></span>
               </div>
               <div className="flex items-center gap-2">
                 <XCircle className="w-4 h-4 text-red-600" />
-                <span className="text-gray-700">Fail: {effectiveTotals.fail}</span>
+                <span className="text-gray-700">Fail: <NumberFlow value={effectiveTotals.fail ?? null} className="inline-block" /></span>
               </div>
               <div className="flex items-center gap-2">
                 <MinusCircle className="w-4 h-4 text-gray-400" />
-                <span className="text-gray-700">NA: {effectiveTotals.na}</span>
+                <span className="text-gray-700">NA: <NumberFlow value={effectiveTotals.na ?? null} className="inline-block" /></span>
               </div>
               <div className="flex items-center gap-2">
                 <Clock className="w-4 h-4 text-yellow-500" />
-                <span className="text-gray-700">Pending: {effectiveTotals.pending}</span>
+                <span className="text-gray-700">Pending: <NumberFlow value={effectiveTotals.pending ?? null} className="inline-block" /></span>
               </div>
             </div>
           )} 
@@ -253,19 +254,19 @@ export function RoomList({ venue: propVenue, venueId, onRoomSelect, onBack, insp
                             <div className="ml-3 text-xs flex items-center gap-3">
                               <div className="flex items-center gap-1">
                                 <CheckCircle2 className="w-4 h-4 text-green-600" />
-                                <span className="text-gray-700">{counts.pass}</span>
+                                <span className="text-gray-700"><NumberFlow value={counts.pass ?? null} className="inline-block" /></span>
                               </div>
                               <div className="flex items-center gap-1">
                                 <XCircle className="w-4 h-4 text-red-600" />
-                                <span className="text-gray-700">{counts.fail}</span>
+                                <span className="text-gray-700"><NumberFlow value={counts.fail ?? null} className="inline-block" /></span>
                               </div>
                               <div className="flex items-center gap-1">
                                 <MinusCircle className="w-4 h-4 text-gray-400" />
-                                <span className="text-gray-700">{counts.na}</span>
+                                <span className="text-gray-700"><NumberFlow value={counts.na ?? null} className="inline-block" /></span>
                               </div>
                               <div className="flex items-center gap-1">
                                 <Clock className="w-4 h-4 text-yellow-500" />
-                                <span className="text-gray-700">{counts.pending}</span>
+                                <span className="text-gray-700"><NumberFlow value={counts.pending ?? null} className="inline-block" /></span>
                               </div>
                             </div>
                           );

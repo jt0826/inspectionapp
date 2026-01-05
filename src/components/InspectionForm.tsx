@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { ArrowLeft, CheckCircle2, XCircle, MinusCircle, Save, Camera, X, Search, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
+import NumberFlow from '@number-flow/react';
 import { Venue, Room, InspectionItem, Inspection } from '../App';
 import { useAuth } from '../contexts/AuthContext';
 import { getInspectionItems, getInspections } from '../utils/inspectionApi';
@@ -290,7 +291,14 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
     loadSaved();
   }, [existingInspection, inspectionId, room.id]);
 
+  const submittingRef = useRef(false);
+
   const handleSubmit = async () => {
+    // Prevent double-submit via synchronous ref check
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    setSaving(true);
+
     const inspId = inspectionId || existingInspection?.id || 'insp_' + Date.now();
 
     // Upload pending photos (if any) before saving the inspection
@@ -406,7 +414,9 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
     } catch (err) {
       console.error('Failed to upload pending photos:', err);
       alert('Failed to upload photos. Save aborted. See console.');
-      // Abort save flow
+      // Abort save flow: clear saving and submission lock
+      setSaving(false);
+      submittingRef.current = false;
       return;
     }
 
@@ -425,7 +435,6 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
 
     // send to backend (no photos)
     try {
-      setSaving(true);
       // Use the consolidated inspections mutation endpoint
       const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections'; // single endpoint placeholder for saves
 
@@ -486,6 +495,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
       alert('Error saving inspection. See console.');
     } finally {
       setSaving(false);
+      submittingRef.current = false;
     }
   };
 
@@ -639,7 +649,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
           <div className="flex items-center justify-between text-sm mb-2">
             <span className="text-gray-700">Progress</span>
             <span className="text-gray-900">
-              {completedCount} / {inspectionItems.length}
+              <NumberFlow value={completedCount ?? null} className="inline-block" /> / <NumberFlow value={inspectionItems.length ?? null} className="inline-block" />
             </span>
           </div>
           <div className="w-full bg-gray-200 rounded-full h-2 mb-3">
@@ -651,19 +661,19 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
           <div className="flex gap-4 text-sm">
             <div className="flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-green-600" />
-              <span className="text-gray-700">Pass: {passCount}</span>
+              <span className="text-gray-700">Pass: <NumberFlow value={passCount ?? null} className="inline-block" /></span>
             </div>
             <div className="flex items-center gap-2">
               <XCircle className="w-4 h-4 text-red-600" />
-              <span className="text-gray-700">Fail: {failCount}</span>
+              <span className="text-gray-700">Fail: <NumberFlow value={failCount ?? null} className="inline-block" /></span>
             </div>
             <div className="flex items-center gap-2">
               <MinusCircle className="w-4 h-4 text-gray-600" />
-              <span className="text-gray-700">N/A: {naCount}</span>
+              <span className="text-gray-700">N/A: <NumberFlow value={naCount ?? null} className="inline-block" /></span>
             </div>
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-yellow-600" />
-              <span className="text-gray-500 text-sm">Pending: {pendingCount}</span>
+              <span className="text-gray-500 text-sm">Pending: <NumberFlow value={pendingCount ?? null} className="inline-block" /></span>
             </div>
           </div>
         </div>
@@ -696,7 +706,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                 </button>
               )}
             </div>
-            <div className="text-xs text-gray-500 mt-1">{filteredItems.length} of {inspectionItems.length} items</div>
+            <div className="text-xs text-gray-500 mt-1"><NumberFlow value={filteredItems.length ?? null} className="inline-block" /> of <NumberFlow value={inspectionItems.length ?? null} className="inline-block" /> items</div>
           </div>
 
           {filteredItems.map((item) => (
