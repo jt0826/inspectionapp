@@ -187,8 +187,18 @@ def load_cloudfront_secret():
         debug('list_images_db: failed to load CloudFront secret %s: %s', CLOUDFRONT_SECRET_NAME, e)
 
 # Logging helper and optional: import CloudFront signer utilities (depends on cryptography being available in the runtime)
+# Disable verbose debug logging by default to improve cold-start perf. Set environment variable ENABLE_DEBUG=true to enable collected logs.
+ENABLE_DEBUG = str(os.environ.get('ENABLE_DEBUG', '')).lower() in ('1', 'true', 'yes', 'on')
 LOGS = []
-def debug(msg, *args):
+
+def debug(msg, *args, force=False):
+    """Conditional debug logger.
+
+    - No-op unless ENABLE_DEBUG is true (or force=True is passed).
+    - Avoids collecting or printing logs in the common (production) case.
+    """
+    if not ENABLE_DEBUG and not force:
+        return
     try:
         s = msg % args if args else str(msg)
     except Exception:
@@ -196,15 +206,22 @@ def debug(msg, *args):
     # Avoid logging private key contents
     if 'PRIVATE KEY' in s or 'privateKey' in s:
         s = s.split('\n')[0] + ' [private key redacted]'
-    LOGS.append(s)
-    print(s)
+    try:
+        LOGS.append(s)
+    except Exception:
+        pass
+    try:
+        print(s)
+    except Exception:
+        pass
 
 try:
     from botocore.signers import CloudFrontSigner
     import rsa
     HAS_RSA = True
 except Exception as e:
-    debug('list_images_db: rsa/CloudFrontSigner unavailable, signed CloudFront URLs disabled: %s', e)
+    # Keep an intentional (non-verbose) notice if signer libs are unavailable
+    debug('list_images_db: rsa/CloudFrontSigner unavailable, signed CloudFront URLs disabled: %s', e, force=True)
     HAS_RSA = False
 
 # Attempt to load secret at cold start (secrets manager) and validate private key if possible
@@ -462,9 +479,9 @@ def lambda_handler(event, context):
                                         if 'Key-Pair-Id' not in qkeys and 'KeyPairId' not in qkeys and 'Key-Pair-Id' not in parsed.query:
                                             debug('list_images_db: WARNING: signed URL is missing Key-Pair-Id query parameter')
 
-                                        # Optional: perform a short server-side GET to the signed URL if caller asked for it (checkSigned=true)
+                                        # Optional: perform a short server-side GET to the signed URL if debug is enabled and caller asked (checkSigned=true)
                                         try:
-                                            if parse_bool(params.get('checkSigned')):
+                                            if ENABLE_DEBUG and parse_bool(params.get('checkSigned')):
                                                 from urllib.request import Request, urlopen
                                                 from urllib.error import HTTPError, URLError
                                                 req = Request(cloudfront_signed, headers={'User-Agent': 'list_images_db-debug/1.0'})
@@ -500,8 +517,10 @@ def lambda_handler(event, context):
                                                     debug('list_images_db: remote fetch URLError: %s', ue)
                                                 except Exception as e2:
                                                     debug('list_images_db: remote fetch unexpected error: %s', e2)
+                                            else:
+                                                debug('list_images_db: skipping server-side checkSigned fetch (disabled)', force=True)
                                         except Exception as e:
-                                            debug('list_images_db: remote fetch of signed URL failed: %s', e)
+                                            debug('list_images_db: remote fetch of signed URL failed: %s', e, force=True)
 
                                     except Exception:
                                         preview = f"signed_url_len={len(cloudfront_signed)}"
@@ -546,22 +565,26 @@ def lambda_handler(event, context):
 
         # Capture /opt contents for debugging (list names, type, size only; do not read file contents)
         opt_contents = []
-        try:
-            opt_root = '/opt/python'
-            if os.path.exists(opt_root) and os.path.isdir(opt_root):
-                for name in os.listdir(opt_root):
-                    full = os.path.join(opt_root, name)
-                    try:
-                        st = os.stat(full)
-                        entry = {'name': name, 'type': 'dir' if os.path.isdir(full) else 'file', 'size': st.st_size}
-                    except Exception as e:
-                        entry = {'name': name, 'type': 'unknown', 'error': str(e)}
-                    opt_contents.append(entry)
-                debug('list_images_db: /opt contents captured: %d entries', len(opt_contents))
-            else:
-                debug('list_images_db: /opt not present or not a directory')
-        except Exception as e:
-            debug('list_images_db: error listing /opt: %s', e)
+        if ENABLE_DEBUG:
+            try:
+                opt_root = '/opt/python'
+                if os.path.exists(opt_root) and os.path.isdir(opt_root):
+                    for name in os.listdir(opt_root):
+                        full = os.path.join(opt_root, name)
+                        try:
+                            st = os.stat(full)
+                            entry = {'name': name, 'type': 'dir' if os.path.isdir(full) else 'file', 'size': st.st_size}
+                        except Exception as e:
+                            entry = {'name': name, 'type': 'unknown', 'error': str(e)}
+                        opt_contents.append(entry)
+                    debug('list_images_db: /opt contents captured: %d entries', len(opt_contents))
+                else:
+                    debug('list_images_db: /opt not present or not a directory')
+            except Exception as e:
+                debug('list_images_db: error listing /opt: %s', e)
+        else:
+            # Debug disabled; skip expensive /opt listing
+            debug('list_images_db: skipping /opt listing (ENABLE_DEBUG not set)', force=True)
 
         # Report how many images had signed URLs
         debug('list_images_db: images=%d, signed=%d', len(images), signed_count)
