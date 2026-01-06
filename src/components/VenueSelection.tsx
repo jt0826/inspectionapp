@@ -73,7 +73,6 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
         venueId: selectedVenue?.id,
         venueName: selectedVenue?.name,
         status: 'in-progress',
-        completedAt: null,
       }
     };
 

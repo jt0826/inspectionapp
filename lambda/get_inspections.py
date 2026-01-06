@@ -96,6 +96,7 @@ def lambda_handler(event, context):
                 # Prefer metadata updatedBy or createdBy as the canonical author; do not propagate deprecated inspectorName
                 author = it.get('updatedBy') or it.get('createdBy') or it.get('created_by') or None
 
+                comp = _try_parse_date(it.get('completedAt') or it.get('completed_at') or None)
                 obj = {
                     'inspection_id': it.get('inspection_id') or it.get('inspectionId') or it.get('id'),
                     'createdAt': created,
@@ -103,10 +104,12 @@ def lambda_handler(event, context):
                     'venueName': it.get('venueName') or it.get('venue_name') or None,
                     'roomId': it.get('roomId') or it.get('room_id') or None,
                     'roomName': it.get('roomName') or it.get('room_name') or None,
-                    'completedAt': _try_parse_date(it.get('completedAt') or it.get('completed_at') or None),
                     'status': (it.get('status') or '').lower() if it.get('status') else None,
                     'raw': it
                 }
+                # only include completedAt when the value is present (avoid null in payloads)
+                if comp is not None:
+                    obj['completedAt'] = comp
 
                 # include creator display name (canonical) and keep inspectorName only as a compatibility fallback
                 obj['createdBy'] = it.get('createdBy') or it.get('created_by') or None

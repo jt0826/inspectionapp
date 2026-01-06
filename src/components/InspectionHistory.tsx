@@ -105,7 +105,9 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection, onR
     // Totals should be provided by the server; default to zeros but warn if missing
     const totals = (rec.totals && typeof rec.totals === 'object') ? { pass: rec.totals.pass ?? 0, fail: rec.totals.fail ?? 0, na: rec.totals.na ?? 0, total: rec.totals.total ?? 0 } : { pass: 0, fail: 0, na: 0, total: 0 };
     if (!rec.totals) console.warn(`Inspection ${id} missing totals in server payload`);
-    if (!completedAt) console.warn(`Inspection ${id} missing completedAt in server payload`);
+    // Only warn about missing completedAt if the server claims the inspection is completed
+    const recStatus = String(rec.status || rec.state || '').toLowerCase();
+    if (recStatus === 'completed' && !completedAt) console.warn(`Inspection ${id} missing completedAt in server payload`);
 
     const items = Array.isArray(rec.items) ? rec.items : [];
 

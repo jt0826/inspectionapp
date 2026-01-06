@@ -131,7 +131,10 @@ def lambda_handler(event, context):
                 venue_name_val = ins.get('venueName') or ins.get('venue_name') or (ins.get('venue') or {}).get('name')
 
                 # Build meta item for Inspection table (do not include deprecated 'inspectorName' or duplicate 'venue_name')
-                meta_item = {pk_attr: inspection_id, 'createdAt': now, 'updatedAt': now, 'createdBy': created_by, 'updatedBy': ins.get('updatedBy') or created_by, 'venueId': venue_id_val, 'venueName': venue_name_val, 'status': ins.get('status') or 'in-progress', 'completedAt': ins.get('completedAt') or None}
+                meta_item = {pk_attr: inspection_id, 'createdAt': now, 'updatedAt': now, 'createdBy': created_by, 'updatedBy': ins.get('updatedBy') or created_by, 'venueId': venue_id_val, 'venueName': venue_name_val, 'status': ins.get('status') or 'in-progress'}
+                # Only attach completedAt if provided (avoid explicitly storing null)
+                if ins.get('completedAt'):
+                    meta_item['completedAt'] = ins.get('completedAt')
                 if sk_attr:
                     meta_item[sk_attr] = '__meta__'
 
@@ -141,7 +144,7 @@ def lambda_handler(event, context):
                 try:
                     insp_data_table = dynamodb.Table(INSPECTION_DATA_TABLE)
                     # Write the canonical metadata row (use camelCase primary fields only)
-                    insp_data_table.put_item(Item={
+                    item_data = {
                         'inspection_id': inspection_id,
                         'inspectionId': inspection_id,
                         'createdAt': meta_item.get('createdAt'),
@@ -151,8 +154,12 @@ def lambda_handler(event, context):
                         'venueId': meta_item.get('venueId'),
                         'venueName': meta_item.get('venueName'),
                         'status': meta_item.get('status') or 'in-progress',
-                        'completedAt': meta_item.get('completedAt')
-                    })
+                    }
+                    # Only include completedAt when present (avoid storing null/empty values)
+                    if meta_item.get('completedAt'):
+                        item_data['completedAt'] = meta_item.get('completedAt')
+
+                    insp_data_table.put_item(Item=item_data)
                     try:
                         k, insp_data_row = _read_inspection_metadata(inspection_id)
                     except Exception as e:
