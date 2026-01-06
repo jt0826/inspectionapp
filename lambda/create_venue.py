@@ -1,9 +1,16 @@
 import json
 import boto3
-import uuid
 from datetime import datetime, timezone, timedelta
 
-TABLE_NAME = 'VenueRoomData'
+# Table names are hardcoded below (stable in this deployment)
+
+
+# Hardcoded canonical table names (backend stable)
+TABLE_VENUE_ROOMS = 'VenueRooms'
+INSPECTION_DATA_TABLE = 'InspectionMetadata'
+TABLE_NAME = TABLE_VENUE_ROOMS
+BUCKET_NAME = 'inspectionappimages'
+
 def _now_local_iso():
     # Return ISO8601 timestamp in local timezone (GMT+8)
     return datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).isoformat()
@@ -79,68 +86,220 @@ def lambda_handler(event, context):
                 if not deleted:
                     return build_response(404, {'message': 'Venue not found', 'venueId': venue_id})
 
-                # Cascade delete: remove all inspections related to this venue from the Inspection table
+                # Cascade delete: remove all inspections, their items, and any images/metadata related to this venue
                 try:
-                    insp_table = dynamodb.Table('Inspection')
+                    TABLE_INSPECTION_ITEMS = 'InspectionItems'
+                    TABLE_INSPECTION_IMAGES = 'InspectionImages'
+
+                    insp_items_table = dynamodb.Table(TABLE_INSPECTION_ITEMS)
+                    insp_meta_table = dynamodb.Table(INSPECTION_DATA_TABLE)
+                    images_table = dynamodb.Table(TABLE_INSPECTION_IMAGES)
                     client = boto3.client('dynamodb')
-                    # We'll scan for items with matching venueId and delete them in batches
-                    from boto3.dynamodb.conditions import Attr
-                    resp_scan = insp_table.scan(FilterExpression=Attr('venueId').eq(venue_id))
-                    insp_items = resp_scan.get('Items', [])
-                    while 'LastEvaluatedKey' in resp_scan:
-                        resp_scan = insp_table.scan(ExclusiveStartKey=resp_scan['LastEvaluatedKey'], FilterExpression=Attr('venueId').eq(venue_id))
-                        insp_items.extend(resp_scan.get('Items', []))
+                    s3_client = boto3.client('s3')
 
-                    deleted_ins = 0
-                    if len(insp_items) > 0:
-                        # discover key schema for inspection table
-                        try:
-                            desc = client.describe_table(TableName='Inspection')
-                            key_schema = desc.get('Table', {}).get('KeySchema', [])
-                            pk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'HASH'), 'inspection_id')
-                            sk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'RANGE'), None)
-                        except Exception:
-                            pk_attr = 'inspection_id'
-                            sk_attr = None
+                    from boto3.dynamodb.conditions import Attr, Key
 
-                        with insp_table.batch_writer() as batch:
-                            for it in insp_items:
-                                key = {pk_attr: it.get(pk_attr)}
-                                if sk_attr and it.get(sk_attr) is not None:
-                                    key[sk_attr] = it.get(sk_attr)
-                                try:
-                                    batch.delete_item(Key=key)
-                                    deleted_ins += 1
-                                except Exception as e:
-                                    print('Failed to queue delete for inspection item during venue delete:', e, it)
-
-                    print(f'Deleted {deleted_ins} inspection rows related to venue {venue_id}')
-
-                    # Best-effort: also delete any metadata rows in InspectionData table with matching venueId
+                    # 1) Find all inspection IDs from InspectionMetadata that reference this venue
+                    inspection_ids = []
                     try:
-                        insp_data_table = dynamodb.Table('InspectionData')
-                        resp_scan2 = insp_data_table.scan(FilterExpression=Attr('venueId').eq(venue_id))
-                        data_items = resp_scan2.get('Items', [])
-                        deleted_meta = 0
-                        while 'LastEvaluatedKey' in resp_scan2:
-                            resp_scan2 = insp_data_table.scan(ExclusiveStartKey=resp_scan2['LastEvaluatedKey'], FilterExpression=Attr('venueId').eq(venue_id))
-                            data_items.extend(resp_scan2.get('Items', []))
+                        scan_kwargs = {'FilterExpression': Attr('venueId').eq(venue_id)}
+                        resp = insp_meta_table.scan(**scan_kwargs)
+                        meta_items = resp.get('Items', [])
+                        while 'LastEvaluatedKey' in resp:
+                            resp = insp_meta_table.scan(ExclusiveStartKey=resp['LastEvaluatedKey'], **scan_kwargs)
+                            meta_items.extend(resp.get('Items', []) or [])
+                        for m in meta_items:
+                            iid = m.get('inspection_id') or m.get('inspectionId') or m.get('id')
+                            if iid:
+                                inspection_ids.append(iid)
+                    except Exception as e:
+                        print('Failed to scan InspectionMetadata for venueId:', e)
 
-                        if len(data_items) > 0:
-                            with insp_data_table.batch_writer() as batch2:
-                                for dit in data_items:
+                    # 2) Delete metadata rows for those inspections (best-effort)
+                    deleted_meta = 0
+                    try:
+                        # determine metadata table key name
+                        try:
+                            desc_meta = client.describe_table(TableName=INSPECTION_DATA_TABLE)
+                            meta_key_schema = desc_meta.get('Table', {}).get('KeySchema', [])
+                            meta_pk = next((k['AttributeName'] for k in meta_key_schema if k['KeyType'] == 'HASH'), 'inspection_id')
+                        except Exception:
+                            meta_pk = 'inspection_id'
+
+                        if inspection_ids:
+                            with insp_meta_table.batch_writer() as b:
+                                for iid in inspection_ids:
                                     try:
-                                        batch2.delete_item(Key={'inspection_id': dit.get('inspection_id')})
+                                        b.delete_item(Key={meta_pk: iid})
                                         deleted_meta += 1
                                     except Exception as e:
-                                        print('Failed to delete InspectionData item during venue delete:', e, dit)
-                        print(f'Deleted {deleted_meta} InspectionData rows related to venue {venue_id}')
+                                        print('Failed to delete metadata row for inspection', iid, e)
                     except Exception as e:
-                        print('Failed to delete InspectionData rows during venue delete:', e)
+                        print('Failed to delete inspection metadata rows:', e)
+
+                    # 3) For each inspection, delete InspectionItems rows (query by partition key where possible)
+                    deleted_items = 0
+                    try:
+                        # discover items table key schema
+                        try:
+                            desc_items = client.describe_table(TableName=TABLE_INSPECTION_ITEMS)
+                            item_key_schema = desc_items.get('Table', {}).get('KeySchema', [])
+                            items_pk = next((k['AttributeName'] for k in item_key_schema if k['KeyType'] == 'HASH'), 'inspection_id')
+                            items_sk = next((k['AttributeName'] for k in item_key_schema if k['KeyType'] == 'RANGE'), None)
+                        except Exception:
+                            items_pk = 'inspection_id'
+                            items_sk = None
+
+                        for iid in inspection_ids:
+                            # try query by partition key
+                            try:
+                                resp_q = insp_items_table.query(KeyConditionExpression=Key(items_pk).eq(iid), ConsistentRead=True)
+                                items = resp_q.get('Items', [])
+                                while 'LastEvaluatedKey' in resp_q:
+                                    resp_q = insp_items_table.query(KeyConditionExpression=Key(items_pk).eq(iid), ExclusiveStartKey=resp_q['LastEvaluatedKey'], ConsistentRead=True)
+                                    items.extend(resp_q.get('Items', []) or [])
+                            except Exception:
+                                # fallback to scan filter
+                                try:
+                                    resp_s = insp_items_table.scan(FilterExpression=Attr('inspection_id').eq(iid))
+                                    items = resp_s.get('Items', [])
+                                    while 'LastEvaluatedKey' in resp_s:
+                                        resp_s = insp_items_table.scan(ExclusiveStartKey=resp_s['LastEvaluatedKey'], FilterExpression=Attr('inspection_id').eq(iid))
+                                        items.extend(resp_s.get('Items', []) or [])
+                                except Exception as e:
+                                    print('Failed to list inspection items for', iid, e)
+                                    items = []
+
+                            if items:
+                                with insp_items_table.batch_writer() as b:
+                                    for it in items:
+                                        try:
+                                            key = {items_pk: it.get(items_pk) or iid}
+                                            if items_sk and it.get(items_sk) is not None:
+                                                key[items_sk] = it.get(items_sk)
+                                            b.delete_item(Key=key)
+                                            deleted_items += 1
+                                        except Exception as e:
+                                            print('Failed to queue delete for inspection item during venue delete:', e, it)
+
+                    except Exception as e:
+                        print('Failed to delete inspection items for venue:', e)
+
+                    # 4) Delete image metadata rows from InspectionImages and remove S3 objects
+                    deleted_image_rows = 0
+                    deleted_s3_objects = 0
+                    try:
+                        # determine images table key schema
+                        try:
+                            desc_imgs = client.describe_table(TableName=TABLE_INSPECTION_IMAGES)
+                            img_key_schema = desc_imgs.get('Table', {}).get('KeySchema', [])
+                            imgs_pk = next((k['AttributeName'] for k in img_key_schema if k['KeyType'] == 'HASH'), 'inspectionId')
+                            imgs_sk = next((k['AttributeName'] for k in img_key_schema if k['KeyType'] == 'RANGE'), None)
+                        except Exception:
+                            imgs_pk = 'inspectionId'
+                            imgs_sk = None
+
+                        s3_delete_keys = []
+
+                        # If we have inspection_ids from metadata, use them
+                        ids_to_scan = inspection_ids if inspection_ids else []
+
+                        # If no inspection ids found, fall back to scanning images table for venueId
+                        if not ids_to_scan:
+                            try:
+                                resp_imgs_scan = images_table.scan(FilterExpression=Attr('venueId').eq(venue_id))
+                                imgs = resp_imgs_scan.get('Items', [])
+                                while 'LastEvaluatedKey' in resp_imgs_scan:
+                                    resp_imgs_scan = images_table.scan(ExclusiveStartKey=resp_imgs_scan['LastEvaluatedKey'], FilterExpression=Attr('venueId').eq(venue_id))
+                                    imgs.extend(resp_imgs_scan.get('Items', []) or [])
+                                # delete rows and collect s3 keys
+                                with images_table.batch_writer() as b:
+                                    for img in imgs:
+                                        try:
+                                            key = {imgs_pk: img.get(imgs_pk)}
+                                            if imgs_sk and img.get(imgs_sk) is not None:
+                                                key[imgs_sk] = img.get(imgs_sk)
+                                            b.delete_item(Key=key)
+                                            deleted_image_rows += 1
+                                            s3k = img.get('s3Key') or img.get('s3_key') or img.get('filename')
+                                            if s3k:
+                                                s3_delete_keys.append(s3k)
+                                        except Exception as e:
+                                            print('Failed to delete image DB row:', e, img)
+                            except Exception as e:
+                                print('Failed to scan InspectionImages by venueId:', e)
+                        else:
+                            # Query images by inspection id and delete
+                            for iid in ids_to_scan:
+                                try:
+                                    resp_imgs = images_table.query(KeyConditionExpression=Key(imgs_pk).eq(iid))
+                                    imgs = resp_imgs.get('Items', [])
+                                    while 'LastEvaluatedKey' in resp_imgs:
+                                        resp_imgs = images_table.query(KeyConditionExpression=Key(imgs_pk).eq(iid), ExclusiveStartKey=resp_imgs['LastEvaluatedKey'])
+                                        imgs.extend(resp_imgs.get('Items', []) or [])
+                                    with images_table.batch_writer() as b:
+                                        for img in imgs:
+                                            try:
+                                                key = {imgs_pk: img.get(imgs_pk) or iid}
+                                                if imgs_sk and img.get(imgs_sk) is not None:
+                                                    key[imgs_sk] = img.get(imgs_sk)
+                                                b.delete_item(Key=key)
+                                                deleted_image_rows += 1
+                                                s3k = img.get('s3Key') or img.get('s3_key') or img.get('filename')
+                                                if s3k:
+                                                    s3_delete_keys.append(s3k)
+                                            except Exception as e:
+                                                print('Failed to delete image DB row:', e, img)
+                                except Exception as e:
+                                    print('Failed to query images for inspection', iid, e)
+
+                        # Bulk delete S3 objects in reasonable chunks
+                        if s3_delete_keys:
+                            def chunks(lst, n):
+                                for i in range(0, len(lst), n):
+                                    yield lst[i:i + n]
+                            for chunk in chunks(s3_delete_keys, 1000):
+                                try:
+                                    resp = s3_client.delete_objects(Bucket=BUCKET_NAME, Delete={'Objects': [{'Key': k} for k in chunk]})
+                                    deleted = resp.get('Deleted', [])
+                                    deleted_s3_objects += len(deleted)
+                                except Exception as e:
+                                    print('Failed to delete some S3 objects during venue delete:', e) 
+                    except Exception as e:
+                        print('Failed to delete image metadata or S3 objects for venue:', e)
+
+                    print(f'Deleted {deleted_items} item rows, {deleted_meta} metadata rows, {deleted_image_rows} image rows and {deleted_s3_objects} S3 objects for venue {venue_id}')
+
+                    # Prepare summary to return to caller for UI messaging
+                    try:
+                        summary = {
+                            'inspections_found': len(inspection_ids) if inspection_ids is not None else 0,
+                            'deleted_items': deleted_items,
+                            'deleted_metadata': deleted_meta,
+                            'deleted_image_rows': deleted_image_rows,
+                            'deleted_s3_objects': deleted_s3_objects,
+                        }
+                    except Exception:
+                        summary = {
+                            'inspections_found': len(inspection_ids) if inspection_ids is not None else 0,
+                            'deleted_items': deleted_items,
+                            'deleted_metadata': deleted_meta,
+                            'deleted_image_rows': deleted_image_rows,
+                            'deleted_s3_objects': deleted_s3_objects,
+                        }
+
                 except Exception as e:
                     print('Failed to cascade-delete inspections for venue:', e)
+                    summary = {
+                        'inspections_found': len(inspection_ids) if inspection_ids is not None else 0,
+                        'deleted_items': deleted_items,
+                        'deleted_metadata': deleted_meta,
+                        'deleted_image_rows': deleted_image_rows,
+                        'deleted_s3_objects': deleted_s3_objects,
+                        'error': str(e)
+                    }
 
-                return build_response(200, {'message': 'Deleted', 'venue': deleted})
+                return build_response(200, {'message': 'Deleted', 'venue': deleted, 'summary': summary})
             except Exception as e:
                 print('Error deleting venue:', e)
                 return build_response(500, {'message': 'Internal server error deleting venue', 'error': str(e)})
@@ -165,7 +324,22 @@ def lambda_handler(event, context):
         if not name or not address:
             return build_response(400, {'message': 'name and address are required', 'what_we_saw': venue_payload})
 
-        venue_id = venue_payload.get('venueId') or f"v-{str(uuid.uuid4())[:8]}"
+        # Require a client-supplied, well-formed venueId (no server generation)
+        venue_id = venue_payload.get('venueId') or (venue_payload.get('venue') or {}).get('venueId')
+        if not venue_id:
+            return build_response(400, {'message': 'venueId is required and must be a well-formed id (prefix: venue_...)'})
+
+        try:
+            from .utils.id_utils import validate_id
+        except Exception:
+            # Fallback simple validator if import fails
+            def validate_id(v, p):
+                return (True, 'ok') if (isinstance(v, str) and v.startswith(p + '_')) else (False, f'id must start with {p}_')
+
+        ok, msg = validate_id(venue_id, 'venue')
+        if not ok:
+            return build_response(400, {'message': 'invalid venueId', 'error': msg, 'venueId': venue_id})
+
         now = _now_local_iso()
 
         item = {

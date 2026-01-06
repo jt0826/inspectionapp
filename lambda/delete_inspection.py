@@ -4,7 +4,7 @@ from boto3.dynamodb.conditions import Key
 
 # Config
 IMAGE_TABLE = 'InspectionImages'
-DATA_TABLE = 'InspectionData'
+DATA_TABLE = 'InspectionMetadata'
 BUCKET_NAME = 'inspectionappimages'
 REGION = 'ap-southeast-1'
 
@@ -33,11 +33,11 @@ def build_response(status_code: int, body: dict):
 def _query_images_for_inspection(inspection_id: str):
     items = []
     try:
-        resp = images_table.query(KeyConditionExpression=Key('inspection_id').eq(inspection_id))
+        resp = images_table.query(KeyConditionExpression=Key('inspectionId').eq(inspection_id))
         items.extend(resp.get('Items', []))
         # handle pagination
         while 'LastEvaluatedKey' in resp:
-            resp = images_table.query(KeyConditionExpression=Key('inspection_id').eq(inspection_id), ExclusiveStartKey=resp['LastEvaluatedKey'])
+            resp = images_table.query(KeyConditionExpression=Key('inspectionId').eq(inspection_id), ExclusiveStartKey=resp['LastEvaluatedKey'])
             items.extend(resp.get('Items', []))
     except Exception as e:
         print('Error querying images for inspection:', e)
@@ -66,7 +66,7 @@ def _batch_delete_s3(keys):
 
 def _delete_image_db_record(inspection_id, sort_key):
     try:
-        images_table.delete_item(Key={'inspection_id': inspection_id, 'room_id#item_id#image_id': sort_key})
+        images_table.delete_item(Key={'inspectionId': inspection_id, 'roomId#itemId#imageId': sort_key})
         return True
     except Exception as e:
         print('Failed to delete image DB record', sort_key, e)
@@ -111,7 +111,7 @@ def lambda_handler(event, context):
             # 1) list images
             images = _query_images_for_inspection(inspection_id)
             s3_keys = [it.get('s3Key') for it in images if it.get('s3Key')]
-            sort_keys = [it.get('room_id#item_id#image_id') for it in images if it.get('room_id#item_id#image_id')]
+            sort_keys = [it.get('roomId#itemId#imageId') for it in images if it.get('roomId#itemId#imageId')]
 
             # 2) delete s3 objects in batches
             if s3_keys:
@@ -131,7 +131,11 @@ def lambda_handler(event, context):
 
         # Finally, delete the inspection record(s) from InspectionData table
         try:
-            resp = data_table.delete_item(Key={'inspection_id': inspection_id})
+            # Try deleting by camelCase key first, then fallback to snake_case for compatibility
+            try:
+                resp = data_table.delete_item(Key={'inspectionId': inspection_id})
+            except Exception:
+                resp = data_table.delete_item(Key={'inspection_id': inspection_id})
             print("Dynamo delete response:", resp)  # debug
             summary['inspectionDeleted'] = True
         except Exception as e:

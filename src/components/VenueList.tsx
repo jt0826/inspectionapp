@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import FadeIn from 'react-fade-in';
 import { ArrowLeft, Building2, MapPin, Plus, Edit2, Trash2, User, LogOut, Clock, UserCircle } from 'lucide-react';
-import { Venue } from '../App';
+import type { Venue } from '../types/venue';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from './ToastProvider';
-import type { Inspection } from '../App';
+import type { Inspection } from '../types/inspection';
 
 import { getVenues } from '../utils/venueApi';
 import LoadingOverlay from './LoadingOverlay';

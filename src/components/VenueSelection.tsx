@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Building2, MapPin, ChevronRight, CheckCircle2, ChevronDown } from 'lucide-react';
-import { Venue } from '../App';
+import type { Venue } from '../types/venue';
 import LoadingOverlay from './LoadingOverlay';
+import { API } from '../config/api';
+import { generateInspectionId } from '../utils/id';
 
 interface VenueSelectionProps {
   venues: Venue[];
@@ -12,7 +14,7 @@ interface VenueSelectionProps {
   // If true, the user initiated a "create new inspection" flow (no draft exists yet)
   isCreatingNewInspection?: boolean;
   // Notify parent when a new inspection was successfully created on the server
-  onInspectionCreated?: (inspection: any) => void;
+  onInspectionCreated?: (inspection: any, originVenue?: Venue | null) => void;
 }
 
 export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectionId, isCreatingNewInspection, onInspectionCreated }: VenueSelectionProps) {
@@ -21,6 +23,7 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
   const [creating, setCreating] = useState(false);
 
   // If parent didn't provide venues, load them on mount so selection is available
+
   React.useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -58,7 +61,7 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
     }
 
     // No draft exists: create a new inspection
-    const inspectionId = `inspection-${Date.now()}`; // Generate a unique inspection ID
+    const inspectionId = generateInspectionId(); // Generate a unique inspection ID
     const payload = {
       action: 'create_inspection',
       inspection: {
@@ -77,7 +80,7 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
     try {
       setCreating(true);
       {/* IMPORTANT: call the new inspections-create resource to create an inspection */}
-      const response = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-create', {
+      const response = await fetch(API.inspectionsCreate, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -92,7 +95,10 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
         let body = data && data.body ? (typeof data.body === 'string' ? JSON.parse(data.body) : data.body) : data;
         const created = body?.inspectionData || body?.inspection || body;
         if (typeof onInspectionCreated === 'function') {
-          onInspectionCreated(created || { inspection_id: inspectionId, venueId: selectedVenue?.id, venueName: selectedVenue?.name, venue_name: selectedVenue?.name, status: 'in-progress' });
+          // Debug: log server-returned created object and current selectedVenue
+          console.debug('VenueSelection: create response created=', created, 'selectedVenue=', selectedVenue);
+          // Pass the created inspection and the selectedVenue so the parent can optimistically show venue details
+          onInspectionCreated(created || { inspection_id: inspectionId, venueId: selectedVenue?.id, venueName: selectedVenue?.name, venue_name: selectedVenue?.name, status: 'in-progress' }, selectedVenue);
         }
         // Notify UI listeners that an inspection was created so counts refresh
         try {

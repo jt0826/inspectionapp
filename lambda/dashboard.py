@@ -8,11 +8,11 @@ except Exception:
     Key = None
 from datetime import datetime, timedelta, timezone
 
-# Config (use same table names as other lambdas)
-INSPECTION_TABLE = os.environ.get('INSPECTION_TABLE', 'InspectionData')
-IMAGE_TABLE = os.environ.get('IMAGE_TABLE', 'InspectionImages')
-INSPECTIONS_DETAIL_TABLE = 'Inspection'  # Detailed inspection items
-VENUE_ROOM_TABLE = 'VenueRoomData'  # Venue and room definitions
+# Config (backend canonical table names hardcoded)
+INSPECTION_TABLE = 'InspectionMetadata'
+IMAGE_TABLE = 'InspectionImages'
+INSPECTIONS_DETAIL_TABLE = 'InspectionItems'  # Detailed inspection items
+VENUE_ROOM_TABLE = 'VenueRooms'  # Venue and room definitions
 REGION = os.environ.get('AWS_REGION', 'ap-southeast-1')
 
 CORS_HEADERS = {
@@ -52,8 +52,8 @@ def _get_inspections():
         return items
     try:
         # Call the inspections-query endpoint via direct lambda invocation or table query
-        # For now, use direct table query to get inspection metadata
-        inspection_table = dynamodb.Table('Inspection')
+        # For now, use direct table query to get inspection item rows (detail table)
+        inspection_table = dynamodb.Table(INSPECTIONS_DETAIL_TABLE)
         
         # Get all meta rows (which contain aggregated totals)
         resp = inspection_table.scan()
@@ -67,11 +67,15 @@ def _get_inspections():
             # Meta rows don't have itemId
             if not item.get('itemId'):
                 # Get corresponding metadata from InspectionData for totals
-                inspection_id = item.get('inspection_id')
+                inspection_id = item.get('inspectionId')
                 if inspection_id:
                     try:
-                        meta_resp = ins_table.get_item(Key={'inspection_id': inspection_id})
+                        # Try camelCase key first, then fallback to snake_case for compatibility
+                        meta_resp = ins_table.get_item(Key={'inspectionId': inspection_id})
                         meta_data = meta_resp.get('Item', {})
+                        if not meta_data:
+                            meta_resp = ins_table.get_item(Key={'inspection_id': inspection_id})
+                            meta_data = meta_resp.get('Item', {})
                         # Merge metadata with inspection record
                         merged = {**item, **meta_data}
                         items.append(merged)
@@ -82,10 +86,10 @@ def _get_inspections():
         
         # If no items found from Inspection table, fallback to InspectionData
         if not items:
-            resp = ins_table.scan(ProjectionExpression='inspection_id, status, totals, completedAt, timestamp, updatedAt, venueName, venue_name, inspectorName, inspector_name, created_by, createdBy, updatedBy, updated_by, venueId, venue_id, byRoom')
+            resp = ins_table.scan(ProjectionExpression='inspectionId, status, totals, completedAt, timestamp, updatedAt, venueName, venue_name, inspectorName, inspector_name, created_by, createdBy, updatedBy, updated_by, venueId, venue_id, byRoom')
             items.extend(resp.get('Items', []))
             while 'LastEvaluatedKey' in resp:
-                resp = ins_table.scan(ExclusiveStartKey=resp['LastEvaluatedKey'], ProjectionExpression='inspection_id, status, totals, completedAt, timestamp, updatedAt, venueName, venue_name, inspectorName, inspector_name, created_by, createdBy, updatedBy, updated_by, venueId, venue_id, byRoom')
+                resp = ins_table.scan(ExclusiveStartKey=resp['LastEvaluatedKey'], ProjectionExpression='inspectionId, status, totals, completedAt, timestamp, updatedAt, venueName, venue_name, inspectorName, inspector_name, created_by, createdBy, updatedBy, updated_by, venueId, venue_id, byRoom')
                 items.extend(resp.get('Items', []))
     except Exception as e:
         print('Error getting inspections:', e)
@@ -163,7 +167,7 @@ def lambda_handler(event, context):
                 }
 
         # Count unique inspections to avoid duplicates
-        total_inspections = len({str(it.get('inspection_id') or it.get('id') or '') for it in inspections})
+        total_inspections = len({str(it.get('inspectionId') or it.get('id') or '') for it in inspections})
         ongoing = 0
         completed_items = []
         total_items = 0
@@ -175,7 +179,7 @@ def lambda_handler(event, context):
 
         for it in inspections:
             status = str(it.get('status') or '').lower()
-            inspection_id = it.get('inspection_id') or it.get('id')
+            inspection_id = it.get('inspectionId') or it.get('id')
             if status == 'completed' or it.get('completedAt'):
                 completed_items.append(it)
             else:

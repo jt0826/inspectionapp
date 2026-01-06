@@ -3,7 +3,7 @@ import { ArrowLeft, History, Building2, Calendar, CheckCircle2, XCircle, AlertCi
 import NumberFlow from '@number-flow/react';
 import FadeInText from './FadeInText';
 import FadeIn from 'react-fade-in';
-import { Inspection } from '../App';
+import type {Inspection} from '../types/inspection';
 import { getInspectionsPartitioned } from '../utils/inspectionApi';
 import InspectionCard from './InspectionCard';
 
@@ -308,9 +308,10 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection, onR
 
 
 
-            {/* Date range filter (client-side) */}
+            {/* Date range filter (client-side) - let's add a 'to' word between the dates */}
             <div className="flex items-center gap-2">
               <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="border rounded px-2 py-1 text-sm text-gray-600" aria-label="Start date" />
+              <span className="text-gray-400">to</span>
               <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="border rounded px-2 py-1 text-sm text-gray-600" aria-label="End date" />
               <button onClick={() => { setStartDate(''); setEndDate(''); }} className="text-sm text-gray-600 hover:text-gray-900">Clear</button>
               <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm">
@@ -339,7 +340,7 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection, onR
                     variant="completed"
                     onClick={() => {
                       if (typeof onResumeInspection === 'function') {
-                        onResumeInspection({ ...inspection, status: 'completed' });
+                        onResumeInspection({ ...inspection });
                       } else {
                         try { window.dispatchEvent(new CustomEvent('viewInspection', { detail: { inspectionId: String(inspection.id || inspection.inspection_id || '') } })); } catch (e) { /* ignore */ }
                       }

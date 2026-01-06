@@ -57,13 +57,19 @@ def lambda_handler(event, context):
             return build_response(400, {'message': 'File too large', 'maxBytes': MAX_FILE_SIZE})
 
         # Build key using ISO timestamp + uuid suffix
-        ts = datetime.now(timezone(timedelta(hours=8))).isoformat().replace(':', '-').replace('.', '-')
-        suffix = uuid.uuid4().hex[:8]
-        # preserve extension if present
-        ext = ''
-        if '.' in filename:
-            ext = '.' + filename.split('.')[-1]
-        key = f"images/{inspection_id}/{venue_id}/{room_id}/{item_id}/{ts}-{suffix}{ext}"
+        # Use shared key generation to ensure consistency across lambdas
+        try:
+            from .utils.id_utils import generate_s3_key
+        except Exception:
+            # fallback to inline implementation if import fails
+            ts = datetime.now(timezone(timedelta(hours=8))).isoformat().replace(':', '-').replace('.', '-')
+            suffix = uuid.uuid4().hex[:8]
+            ext = ''
+            if '.' in filename:
+                ext = '.' + filename.split('.')[-1]
+            key = f"images/{inspection_id}/{venue_id}/{room_id}/{item_id}/{ts}-{suffix}{ext}"
+        else:
+            key = generate_s3_key(inspection_id, venue_id, room_id, item_id, filename)
 
         # Generate presigned POST (form) to avoid CORS preflight issues
         # Allow up to MAX_FILE_SIZE bytes via a content-length-range condition

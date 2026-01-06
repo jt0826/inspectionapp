@@ -1,6 +1,6 @@
 import React from 'react';
 import { ArrowLeft, Building2, MapPin } from 'lucide-react';
-import type { Venue, Room } from '../App';
+import type { Venue, Room } from '../types/venue';
 
 interface VenueLayoutProps {
   venue: Venue;

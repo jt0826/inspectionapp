@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Building2, MapPin, CheckCircle2, Home, ArrowRight, Loader2 } from 'lucide-react';
-import { Venue } from '../App';
+import type { Venue } from '../types/venue';
 import { getVenueById } from '../utils/venueApi';
 
 interface InspectionConfirmationProps {
@@ -21,16 +21,71 @@ export function InspectionConfirmation({
 
   useEffect(() => {
     let cancelled = false;
-    if (!venue && pendingVenueId) {
+    console.debug('InspectionConfirmation: effect start; pendingVenueId=', pendingVenueId, 'hasPropVenue=', Boolean(venue), 'propHasRooms=', Boolean(venue && venue.rooms && venue.rooms.length > 0));
+    // Fetch the venue if we don't have it, or if the provided `venue` lacks room details
+    if (pendingVenueId && (!venue || !venue.rooms || venue.rooms.length === 0)) {
       (async () => {
         setLoading(true);
         try {
-          const v = await getVenueById(String(pendingVenueId));
-          if (v && !cancelled) {
+          // First, proactively call the venues list endpoint so we always hit `venues-query` on mount
+          let found: any = null;
+          try {
+            const { getVenues } = await import('../utils/venueApi');
+            const all = await getVenues();
+            console.debug('InspectionConfirmation: getVenues immediate fetch returned', (all || []).length, 'venues');
+            const f = all.find((vv: any) => String(vv.venueId || vv.id) === String(pendingVenueId));
+            if (f) {
+              found = f;
+            }
+          } catch (e) {
+            console.debug('InspectionConfirmation: getVenues immediate fetch failed', e);
+          }
 
+          // If not found in the initial scan, retry getVenueById (which may be cached/fast) a few times with a fallback to scanning
+          if (!found) {
+            for (let attempt = 0; attempt < 3 && !found && !cancelled; attempt += 1) {
+              try {
+                const v = await getVenueById(String(pendingVenueId));
+                if (v) {
+                  found = v;
+                  break;
+                }
+              } catch (e) {
+                console.debug('InspectionConfirmation: getVenueById attempt failed', e);
+              }
 
-            const mapped = { id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || '', updatedAt: v.updatedAt || v.createdAt || '', createdBy: v.createdBy || '' } as Venue;
+              // Fallback: try scanning all venues and searching by id
+              try {
+                const { getVenues } = await import('../utils/venueApi');
+                const all = await getVenues();
+                const f = all.find((vv: any) => String(vv.venueId || vv.id) === String(pendingVenueId));
+                if (f) {
+                  found = f;
+                  break;
+                }
+              } catch (e) {
+                console.debug('InspectionConfirmation: getVenues fallback failed', e);
+              }
+
+              // Backoff between retries
+              await new Promise((r) => setTimeout(r, 300));
+            }
+          }
+
+          if (found && !cancelled) {
+            // Normalize fields (defensive mapping)
+            const mapped = {
+              id: found.venueId || found.id,
+              name: found.name || '',
+              address: found.address || '',
+              rooms: (found.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })),
+              createdAt: found.createdAt || '',
+              updatedAt: found.updatedAt || found.createdAt || '',
+              createdBy: found.createdBy || ''
+            } as Venue;
             setLocalVenue(mapped);
+          } else {
+            console.warn('InspectionConfirmation: venue not found for id', pendingVenueId);
           }
         } catch (e) {
           console.warn('Failed to fetch venue for confirmation', e);
@@ -73,7 +128,7 @@ export function InspectionConfirmation({
                 </div>
                 <div className="inline-flex items-center gap-2 bg-white px-3 py-1.5 rounded-full">
                   <span className="text-sm lg:text-base text-gray-700">
-                    {displayVenue ? `${displayVenue.rooms.length} ${displayVenue.rooms.length === 1 ? 'room' : 'rooms'} available` : 'Venue details unavailable'}
+                    {displayVenue ? `${(displayVenue.rooms || []).length} ${((displayVenue.rooms || []).length === 1 ? 'room' : 'rooms')} available` : (loading ? 'Fetching venue details…' : 'Venue details unavailable')}
                   </span>
                 </div>
               </div>

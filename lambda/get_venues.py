@@ -2,7 +2,7 @@ import json
 import boto3
 
 # Replace with your DynamoDB table name that stores venues
-TABLE_NAME = 'Venues'
+TABLE_NAME = 'VenueRooms'
 
 # CORS settings - set Access-Control-Allow-Origin to your frontend origin in production
 CORS_HEADERS = {

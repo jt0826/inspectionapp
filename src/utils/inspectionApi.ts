@@ -1,9 +1,11 @@
+import { API } from '../config/api';
+
 export async function getInspectionSummary(inspectionId: string) {
   if (!inspectionId) return null;
   // Consolidated inspections query endpoint — expect JSON response with body containing summary
-  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-query';
+
   try {
-    const res = await fetch(API_BASE, {
+    const res = await fetch(API.inspectionsQuery, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'get_inspection_summary', inspection_id: inspectionId }),
@@ -11,14 +13,22 @@ export async function getInspectionSummary(inspectionId: string) {
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      console.warn('getInspectionSummary non-ok', res.status, text, API_BASE);
+      console.warn('getInspectionSummary non-ok', res.status, text, API.inspectionsQuery);
       return null;
     }
 
     // Parse and return the canonical body payload
     const data = await res.json();
     const body = data?.body ? (typeof data.body === 'string' ? JSON.parse(data.body) : data.body) : data;
-    return body || null;
+    // Validate/normalize server response into canonical camelCase Inspection shape
+    try {
+      const { parseInspection } = await import('../schemas/inspection');
+      const parsed = parseInspection(body);
+      return parsed || body || null;
+    } catch (e) {
+      console.warn('getInspectionSummary validation failed', e);
+      return body || null;
+    }
   } catch (e) {
     console.warn('getInspectionSummary failed', e);
     return null;
@@ -27,36 +37,24 @@ export async function getInspectionSummary(inspectionId: string) {
 
 
 
+/**
+ * Deprecated: do NOT call `checkInspectionComplete` from the client to determine or assert
+ * that an inspection is complete. Completion is server-authoritative and is set only by
+ * the `save_inspection` handler as part of a full save operation. This client helper is now
+ * a no-op and will return null. Keep the server-side helper in the Lambda packages where
+ * it may still be used internally for diagnostic purposes.
+ */
 export async function checkInspectionComplete(inspectionId: string, venueId: string) {
-  if (!inspectionId || !venueId) return null;
-  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-query';
-  try {
-    const res = await fetch(API_BASE, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'check_inspection_complete', inspection_id: inspectionId, venueId }),
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      console.warn('checkInspectionComplete non-ok', res.status, text, API_BASE);
-      return null;
-    }
-    const data = await res.json();
-    const body = data.body ? (typeof data.body === 'string' ? JSON.parse(data.body) : data.body) : data;
-    return body;
-  } catch (e) {
-    console.warn('checkInspectionComplete failed', e);
-    return null;
-  }
+  console.warn('checkInspectionComplete() is deprecated on the client. Do not rely on client-side completeness checks.');
+  return null;
 }
 
 export async function deleteInspection(inspectionId: string, opts?: { cascade?: boolean }, token?: string) {
   if (!inspectionId) return null;
   // Use the consolidated inspections-delete endpoint
-  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-delete';
   try {
-    console.log('[API] deleteInspection ->', API_BASE, inspectionId, 'cascade=', !!opts?.cascade);
-    const res = await fetch(API_BASE, {
+    console.log('[API] deleteInspection ->', API.inspectionsDelete, inspectionId, 'cascade=', !!opts?.cascade);
+    const res = await fetch(API.inspectionsDelete, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ action: 'delete_inspection', inspection_id: inspectionId, cascade: !!opts?.cascade }),
@@ -73,7 +71,7 @@ export async function deleteInspection(inspectionId: string, opts?: { cascade?: 
     }
 
     if (!res.ok) {
-      console.warn('deleteInspection non-ok', res.status, data, API_BASE);
+      console.warn('deleteInspection non-ok', res.status, data, API.inspectionsDelete);
       return { ok: false, status: res.status, data };
     }
 
@@ -110,7 +108,7 @@ export async function listImagesForInspection(inspectionId: string) {
     // Query list-images-db for each room in parallel and aggregate
     const fetches = roomIds.map(async (roomId) => {
       try {
-        const resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/list-images-db', {
+        const resp = await fetch(API.listImagesDb, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ inspectionId, roomId, signed: true }),
@@ -121,7 +119,14 @@ export async function listImagesForInspection(inspectionId: string) {
           return [];
         }
         const data = await resp.json();
-        return data.images || [];
+        try {
+          const { parseInspectionImagesArray } = await import('../schemas/db');
+          const parsed = parseInspectionImagesArray(data.images || []);
+          return parsed || (data.images || []);
+        } catch (e) {
+          console.warn('listImagesForInspection validation failed', e);
+          return data.images || [];
+        }
       } catch (e) {
         console.warn('listImagesForInspection query failed for room', roomId, e);
         return [];
@@ -152,7 +157,7 @@ export async function listImagesForInspection(inspectionId: string) {
 export async function deleteImageByDbEntry({ inspectionId, roomId, itemId, imageId, s3Key }: { inspectionId: string, roomId?: string, itemId?: string, imageId?: string, s3Key?: string }) {
   try {
     // Attempt S3 deletion via DB-authoritative endpoint
-    const deleteS3Resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/delete-s3-by-db-entry', {
+    const deleteS3Resp = await fetch(API.deleteS3ByDbEntry, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ inspectionId, roomId, itemId, imageId, s3Key }),
@@ -164,7 +169,7 @@ export async function deleteImageByDbEntry({ inspectionId, roomId, itemId, image
     }
 
     // Now delete metadata record
-    const delDbResp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/delete-image-db', {
+    const delDbResp = await fetch(API.deleteImageDb, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ inspectionId, roomId, itemId, imageId, s3Key }),
@@ -185,9 +190,8 @@ export async function deleteImageByDbEntry({ inspectionId, roomId, itemId, image
 
 
 export async function getInspections() {
-  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-query';
   try {
-    const res = await fetch(API_BASE, {
+    const res = await fetch(API.inspectionsQuery, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'list_inspections' }),
@@ -195,14 +199,21 @@ export async function getInspections() {
 
     if (!res.ok) {
       const txt = await res.text().catch(() => '');
-      console.warn('getInspections non-ok', res.status, txt, API_BASE);
+      console.warn('getInspections non-ok', res.status, txt, API.inspectionsQuery);
       return [];
     }
 
     const data = await res.json();
     const body = data?.body ? (typeof data.body === 'string' ? JSON.parse(data.body) : data.body) : data;
     const items: any[] = Array.isArray(body?.inspections) ? body.inspections : [];
-    return items;
+    try {
+      const { parseInspectionsArray } = await import('../schemas/inspection');
+      const parsed = parseInspectionsArray(items);
+      return parsed || items;
+    } catch (e) {
+      console.warn('getInspections: parsing inspections failed', e);
+      return items;
+    }
   } catch (e) {
     console.warn('getInspections failed', e);
     return [];
@@ -211,11 +222,10 @@ export async function getInspections() {
 
 // New helper: return the parsed body from list_inspections including any server-provided partitions like 'completed'/'ongoing'
 export async function getInspectionsPartitioned(opts?: { completedLimit?: number | null }) {
-  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-query';
   try {
     const bodyPayload: any = { action: 'list_inspections' };
     if (opts && typeof opts.completedLimit !== 'undefined') bodyPayload.completed_limit = opts.completedLimit;
-    const res = await fetch(API_BASE, {
+    const res = await fetch(API.inspectionsQuery, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(bodyPayload),
@@ -223,13 +233,23 @@ export async function getInspectionsPartitioned(opts?: { completedLimit?: number
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      console.warn('getInspectionsPartitioned non-ok', res.status, text, API_BASE);
+      console.warn('getInspectionsPartitioned non-ok', res.status, text, API.inspectionsQuery);
       return null;
     }
 
     const data = await res.json();
     const body = data.body ? (typeof data.body === 'string' ? JSON.parse(data.body) : data.body) : data;
     // body may contain: inspections, completed, ongoing
+    // Normalize inspections array if present
+    try {
+      const { parseInspectionsArray } = await import('../schemas/inspection');
+      if (body && Array.isArray(body.inspections)) {
+        const parsed = parseInspectionsArray(body.inspections);
+        if (parsed) body.inspections = parsed;
+      }
+    } catch (e) {
+      console.warn('getInspectionsPartitioned validation failed', e);
+    }
     return body;
   } catch (e) {
     console.warn('getInspectionsPartitioned failed', e);
@@ -239,16 +259,15 @@ export async function getInspectionsPartitioned(opts?: { completedLimit?: number
 
 // Small helper to retrieve server-side dashboard metrics (authoritative)
 export async function getDashboardMetrics(days?: number) {
-  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/dashboard';
   try {
-    const res = await fetch(API_BASE, {
+    const res = await fetch(API.dashboard, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ days: days || 7 }),
     });
     if (!res.ok) {
       const txt = await res.text().catch(() => '');
-      console.warn('getDashboardMetrics non-ok', res.status, txt, API_BASE);
+      console.warn('getDashboardMetrics non-ok', res.status, txt, API.dashboard);
       return null;
     }
     const data = await res.json();
@@ -263,16 +282,15 @@ export async function getDashboardMetrics(days?: number) {
 export async function getInspectionItems(inspectionId: string) {
   if (!inspectionId) return null;
   // Use consolidated inspections query endpoint to fetch inspection items
-  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-query';
   try {
-    const res = await fetch(API_BASE, {
+    const res = await fetch(API.inspectionsQuery, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'get_inspection', inspection_id: inspectionId }),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      console.warn('getInspectionItems non-ok', res.status, text, API_BASE);
+      console.warn('getInspectionItems non-ok', res.status, text, API.inspectionsQuery);
       return null;
     }
 
@@ -282,7 +300,14 @@ export async function getInspectionItems(inspectionId: string) {
     console.log('[API][getInspectionItems] parsed body:', body);
     const items = body.items || [];
     console.log('[API][getInspectionItems] items:', items);
-    return items;
+    try {
+      const { parseInspectionItemsArray } = await import('../schemas/db');
+      const parsed = parseInspectionItemsArray(items);
+      return parsed || items;
+    } catch (e) {
+      console.warn('getInspectionItems validation failed', e);
+      return items;
+    }
   } catch (e) {
     console.warn('getInspectionItems failed', e);
     return null;

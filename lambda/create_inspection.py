@@ -1,9 +1,19 @@
 import json
 import boto3
-import uuid
 from datetime import datetime, timezone, timedelta
 
-TABLE_NAME = 'Inspection'
+# Optional validation via pydantic models
+try:
+    from .schemas.db import validate_inspection_metadata
+except Exception:
+    def validate_inspection_metadata(p):
+        return p
+
+# Hardcoded canonical table names (backend stable)
+TABLE_INSPECTION_ITEMS = 'InspectionItems'
+INSPECTION_DATA_TABLE = 'InspectionMetadata'
+# Legacy compatibility
+TABLE_NAME = TABLE_INSPECTION_ITEMS
 
 def _now_local_iso():
     # Return ISO8601 timestamp in local timezone (GMT+8)
@@ -17,6 +27,22 @@ CORS_HEADERS = {
 }
 
 dynamodb = boto3.resource('dynamodb')
+
+# Helper to read InspectionMetadata robustly using common key names
+def _read_inspection_metadata(iid):
+    try:
+        insp_table = dynamodb.Table(INSPECTION_DATA_TABLE)
+        for k in ('inspection_id', 'inspectionId'):
+            try:
+                resp = insp_table.get_item(Key={k: iid})
+                item = resp.get('Item')
+                if item is not None:
+                    return (k, item)
+            except Exception:
+                pass
+        return (None, None)
+    except Exception:
+        return (None, None)
 
 def build_response(status_code, body):
     return {
@@ -67,10 +93,29 @@ def lambda_handler(event, context):
             if not inspection_id:
                 return build_response(400, {'message': 'inspection_id is required for create_inspection'})
 
+            # Validate metadata shape
+            try:
+                validated = validate_inspection_metadata(ins)
+            except Exception as e:
+                print('Validation error for create_inspection:', e)
+                validated = None
+            if validated is None:
+                return build_response(400, {'message': 'invalid inspection payload'})
+
+            # Validate inspection_id format (client-supplied)
+            try:
+                from .utils.id_utils import validate_id
+            except Exception:
+                def validate_id(v, p):
+                    return (True, 'ok') if (isinstance(v, str) and v.startswith(p + '_')) else (False, f'id must start with {p}_')
+            ok, msg = validate_id(inspection_id, 'inspection')
+            if not ok:
+                return build_response(400, {'message': 'invalid inspection_id', 'error': msg, 'inspection_id': inspection_id})
+
             # Discover table key schema for Inspection table (to decide sk name)
             try:
                 client = boto3.client('dynamodb')
-                desc = client.describe_table(TableName='Inspection')
+                desc = client.describe_table(TableName=TABLE_INSPECTION_ITEMS)
                 key_schema = desc.get('Table', {}).get('KeySchema', [])
                 pk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'HASH'), 'inspection_id')
                 sk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'RANGE'), None)
@@ -89,15 +134,15 @@ def lambda_handler(event, context):
                 if sk_attr:
                     meta_item[sk_attr] = '__meta__'
 
-                insp_table = dynamodb.Table('Inspection')
-                insp_table.put_item(Item=meta_item)
-
-                # Upsert into InspectionData for quick listing
+                # Note: Previously we wrote a '__meta__' row into the InspectionItems table. We no longer persist meta rows
+                # alongside items; instead we maintain canonical metadata in the InspectionMetadata table only.
                 insp_data_row = None
                 try:
-                    insp_data_table = dynamodb.Table('InspectionData')
+                    insp_data_table = dynamodb.Table(INSPECTION_DATA_TABLE)
+                    # Write the canonical metadata row (both snake_case and camelCase keys where useful)
                     insp_data_table.put_item(Item={
                         'inspection_id': inspection_id,
+                        'inspectionId': inspection_id,
                         'createdAt': meta_item.get('createdAt'),
                         'updatedAt': now,
                         'createdBy': meta_item.get('createdBy'),
@@ -110,9 +155,9 @@ def lambda_handler(event, context):
                         'completedAt': meta_item.get('completedAt')
                     })
                     try:
-                        resp_meta = insp_data_table.get_item(Key={'inspection_id': inspection_id})
-                        insp_data_row = resp_meta.get('Item')
-                    except Exception:
+                        k, insp_data_row = _read_inspection_metadata(inspection_id)
+                    except Exception as e:
+                        print('InspectionData get_item error:', e)
                         insp_data_row = None
                 except Exception as e:
                     print('Failed to upsert InspectionData meta on create_inspection:', e)

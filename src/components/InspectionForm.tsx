@@ -1,9 +1,12 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { ArrowLeft, CheckCircle2, XCircle, MinusCircle, Save, Camera, X, Search, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
 import NumberFlow from '@number-flow/react';
-import { Venue, Room, InspectionItem, Inspection } from '../App';
+import type { Venue, Room } from '../types/venue';
+import type { Inspection, InspectionItem } from '../types/inspection';
 import { useAuth } from '../contexts/AuthContext';
 import { getInspectionItems, getInspections } from '../utils/inspectionApi';
+import { API } from '../config/api';
+import { generatePhotoId, generateItemId, generateInspectionId } from '../utils/id';
 import { useToast } from './ToastProvider';
 import LoadingOverlay from './LoadingOverlay';
 
@@ -18,30 +21,30 @@ interface InspectionFormProps {
 }
 
 const defaultInspectionItems: Omit<InspectionItem, 'status' | 'notes' | 'photos'>[] = [
-  { id: '1', item: 'Fire extinguisher present and accessible' },
-  { id: '2', item: 'Emergency exit signs illuminated' },
-  { id: '3', item: 'Exit paths clear and unobstructed' },
-  { id: '4', item: 'First aid kit available' },
-  { id: '5', item: 'Floors clean and free of debris' },
-  { id: '6', item: 'Walls and surfaces clean' },
-  { id: '7', item: 'No signs of pests or infestation' },
-  { id: '8', item: 'Lighting functional' },
-  { id: '9', item: 'HVAC system operational' },
-  { id: '10', item: 'Doors and locks functioning properly' },
-  { id: '11', item: 'Windows intact and clean' },
-  { id: '12', item: 'Furniture in good condition' },
-  { id: '13', item: 'Electrical outlets functional' },
-  { id: '14', item: 'ADA accessibility requirements met' },
-  { id: '15', item: 'Required signage posted' },
+  { id: '1', name: 'Fire extinguisher present and accessible' },
+  { id: '2', name: 'Emergency exit signs illuminated' },
+  { id: '3', name: 'Exit paths clear and unobstructed' },
+  { id: '4', name: 'First aid kit available' },
+  { id: '5', name: 'Floors clean and free of debris' },
+  { id: '6', name: 'Walls and surfaces clean' },
+  { id: '7', name: 'No signs of pests or infestation' },
+  { id: '8', name: 'Lighting functional' },
+  { id: '9', name: 'HVAC system operational' },
+  { id: '10', name: 'Doors and locks functioning properly' },
+  { id: '11', name: 'Windows intact and clean' },
+  { id: '12', name: 'Furniture in good condition' },
+  { id: '13', name: 'Electrical outlets functional' },
+  { id: '14', name: 'ADA accessibility requirements met' },
+  { id: '15', name: 'Required signage posted' },
  ];
 
-const makePhotoId = () => 'ph_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2,9);
+const makePhotoId = () => generatePhotoId();
 
 // Ensure any incoming item-like object is normalized to the InspectionItem shape
 const normalizeItem = (it: any): InspectionItem => ({
-  id: it.id || it.itemId || it.ItemId || ('item_' + Math.random().toString(36).substr(2, 9)),
-  item: it.itemName || it.item || it.ItemName || it.name || '',
-  status: (it.status || 'pending').toString().toLowerCase() as any,
+  id: it.id || it.itemId || it.ItemId || generateItemId(),
+  name: it.itemName || it.item || it.ItemName || it.name || '',
+  status: (it.status || 'pending') as any,
   photos: it.photos || [],
   notes: it.comments || it.notes || ''
 });
@@ -58,8 +61,8 @@ const enforceRoomOrder = (items: InspectionItem[], room: Room) => {
   return items.slice().sort((a, b) => {
     const aKey = String(a.id || '');
     const bKey = String(b.id || '');
-    const aName = String(a.item || '').toLowerCase();
-    const bName = String(b.item || '').toLowerCase();
+    const aName = String(a.name || '').toLowerCase();
+    const bName = String(b.name || '').toLowerCase();
 
     const aIndex = order.findIndex((ok: { ids: string[]; names: string[] }) => ok.ids.includes(aKey) || (aName && ok.names.includes(aName)));
     const bIndex = order.findIndex((ok: { ids: string[]; names: string[] }) => ok.ids.includes(bKey) || (bName && ok.names.includes(bName)));
@@ -89,8 +92,8 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
     // Prefer room items from the venue (coming from DB). Fall back to default list if none.
     if (room && Array.isArray((room as any).items) && (room as any).items.length > 0) {
       return (room as any).items.map((it: any) => ({
-        id: it.itemId || it.id || ('item_' + Math.random().toString(36).substr(2, 9)),
-        item: it.name || it.item || '',
+        id: it.itemId || it.id || generateItemId(),
+        name: it.name || it.item || '',
         status: 'pending' as const,
         photos: [],
         notes: '',
@@ -99,7 +102,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
 
     return defaultInspectionItems.map((item) => ({
       ...item,
-      id: 'item_' + Math.random().toString(36).substr(2, 9),
+      id: generateItemId(),
       status: 'pending' as const,
       photos: [],
       notes: '',
@@ -164,7 +167,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
   const filteredItems = useMemo(() => {
     if (!debouncedQuery) return inspectionItems;
     const q = debouncedQuery.toLowerCase();
-    return inspectionItems.filter(it => (it.item || '').toLowerCase().includes(q));
+    return inspectionItems.filter(it => (it.name || '').toLowerCase().includes(q));
   }, [inspectionItems, debouncedQuery]);
 
   const highlightMatch = (text: string, q: string) => {
@@ -183,10 +186,10 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
   // Load saved items when resuming an inspection or when an existingInspection prop is provided
   useEffect(() => {
     const mapDbItem = (it: any): InspectionItem => ({
-      id: it.itemId || it.item || it.ItemId || ('item_' + Math.random().toString(36).substr(2,9)),
-      item: it.itemName || it.item || it.ItemName || it.name || '',
-      // Normalize status from backend to lower-case and default to 'pending'
-      status: (it.status || 'pending').toString().toLowerCase(),
+      id: it.itemId || it.item || it.ItemId || generateItemId(),
+      name: it.itemName || it.item || it.ItemName || it.name || '',
+      // Normalize status from backend and default to 'pending'
+      status: (it.status || 'pending') as any,
       photos: it.photos || [],
       notes: it.comments || it.notes || ''
     });
@@ -229,7 +232,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
           if (!items) return;
           items = (items as any[]).filter((it) => String(it.roomId || it.room_id || it.room || '') === String(room.id));
           // Filter out meta rows / non-item rows that lack an identifier
-          items = items.filter((it: any) => (it.itemId || it.item || it.ItemId || it.id));
+          items = items.filter((it: any) => (it.itemId || it.id || it.item || it.ItemId));
           if (items && items.length > 0) {
             let mapped = items.map((it: any) => mapDbItem(it));
             // enforce venue room item order when available
@@ -237,7 +240,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
             setInspectionItems(mapped);
             (async () => {
               try {
-                const resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/list-images-db', {
+                const resp = await fetch(API.listImagesDb, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ inspectionId: inspectionId, roomId: room.id, signed: true })
@@ -299,7 +302,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
     submittingRef.current = true;
     setSaving(true);
 
-    const inspId = inspectionId || existingInspection?.id || 'insp_' + Date.now();
+    const inspId = inspectionId || existingInspection?.id || generateInspectionId();
 
     // Upload pending photos (if any) before saving the inspection
     const uploadPendingPhotos = async () => {
@@ -318,7 +321,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
               updateItem(it.id, { photos: updatedPhotos });
 
               // request signed url
-              const signResp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/sign-upload', {
+              const signResp = await fetch(API.signUpload, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -361,11 +364,12 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
               await new Promise(resolve => setTimeout(resolve, 500)); // slight delay to ensure S3 consistency
 
               // register metadata
-              const registerResp = await fetch(`https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/register-image`, {
+              const registerResp = await fetch(API.registerImage, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                   key,
+                  imageId: p.id,
                   inspectionId: inspId,
                   venueId: venue.id,
                   roomId: room.id,
@@ -420,8 +424,8 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
       return;
     }
 
-    const inspectionStatus = completedCount === inspectionItems.length ? 'completed' : 'in_progress';
-
+    // Send 'in-progress' as the client-declared status. The server will authoritative mark
+    // the inspection as completed only after verifying all venue-prescribed items are PASS.
     const inspectionToSubmit: Inspection = {
       id: inspId,
       venueId: venue.id,
@@ -430,29 +434,26 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
       roomName: room.name,
       inspectorName: user?.name || 'Unknown',
       items: inspectionItems,
-      status: inspectionStatus as any,
+      status: 'in-progress' as any,
     };
 
     // send to backend (no photos)
     try {
       // Use the consolidated inspections mutation endpoint
-      const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections'; // single endpoint placeholder for saves
-
       const payload = {
         action: 'save_inspection',
         inspection: {
           id: inspectionToSubmit.id,
-          inspection_id: inspectionToSubmit.id,
           venueId: inspectionToSubmit.venueId,
           venueName: inspectionToSubmit.venueName,
           roomId: inspectionToSubmit.roomId,
           roomName: inspectionToSubmit.roomName,
           inspectorName: inspectionToSubmit.inspectorName,
-          items: inspectionToSubmit.items.map((it: any) => ({ itemId: it.id, status: it.status, notes: it.notes, itemName: it.item, order: it.order, images: (it.photos || []).filter((p: any) => p.imageId).map((p: any) => ({ imageId: p.imageId, s3Key: p.s3Key, filename: p.filename })) }))
+          items: inspectionToSubmit.items.map((it: any) => ({ itemId: it.id, status: it.status, notes: it.notes, itemName: it.name, order: it.order, images: (it.photos || []).filter((p: any) => p.imageId).map((p: any) => ({ imageId: p.imageId, s3Key: p.s3Key, filename: p.filename })) }))
         }
       };
 
-      const res = await fetch(API_BASE, {
+      const res = await fetch(API.inspections, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -527,7 +528,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
 
   const fetchItemImages = async (itemId: string) => {
     try {
-      const resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/list-images-db', {
+      const resp = await fetch(API.listImagesDb, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ inspectionId: inspectionId, roomId: room.id, signed: true })
@@ -576,7 +577,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
 
       try {
         // Prefer calling delete-by-db-entry which will find the s3Key then delete the object
-        const deleteS3Resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/delete-s3-by-db-entry', {
+        const deleteS3Resp = await fetch(API.deleteS3ByDbEntry, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ inspectionId: effectiveInspectionId, roomId: room.id, itemId: id, imageId: toRemove.imageId, s3Key: toRemove.s3Key })
@@ -584,7 +585,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
         if (!deleteS3Resp.ok) throw new Error('Failed to delete object from S3');
 
         // Now delete the metadata record
-        const delDbResp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/delete-image-db', {
+        const delDbResp = await fetch(API.deleteImageDb, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ inspectionId: effectiveInspectionId, roomId: room.id, itemId: id, imageId: toRemove.imageId, s3Key: toRemove.s3Key })
@@ -637,7 +638,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
           </p>
           {existingInspection && (
             <p className="text-blue-200 text-sm mt-1">
-              {isReadOnly ? 'Completed inspection (read-only)' : (existingInspection.items.every(i => i.status === null || defaultInspectionItems.find(t => t.id === i.id)?.item !== i.item)
+              {isReadOnly ? 'Completed inspection (read-only)' : (existingInspection.items.every(i => i.status === null || defaultInspectionItems.find(t => t.id === i.id)?.name !== i.name)
                 ? 'Re-inspection (Failed Items Only)'
                 : 'Editing existing inspection')}
             </p>
@@ -712,7 +713,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
           {filteredItems.map((item) => (
                     <div key={item.id} className="border border-gray-200 rounded-lg p-4 mb-4">
                       <div className="flex items-center justify-between mb-3">
-                        <p className="text-gray-900 mr-2">{debouncedQuery ? highlightMatch(item.item || '', debouncedQuery) : item.item}</p>
+                        <p className="text-gray-900 mr-2">{debouncedQuery ? highlightMatch(item.name || '', debouncedQuery) : item.name}</p>
                         {item.status === 'pending' && <span className="text-xs text-gray-500">Pending</span>}
                       </div>
 
@@ -846,7 +847,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                                   }
                                 }}
                                 className="hidden"
-                                aria-label={`Take photo for ${item.item}`}
+                                aria-label={`Take photo for ${item.name}`}
                               />
                             </label>
 
@@ -865,7 +866,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
                                   }
                                 }}
                                 className="hidden"
-                                aria-label={`Choose photo for ${item.item}`}
+                                aria-label={`Choose photo for ${item.name}`}
                               />
                             </label>
                           </div>

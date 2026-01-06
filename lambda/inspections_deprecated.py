@@ -2,7 +2,24 @@ import json
 import boto3
 from datetime import datetime, timezone, timedelta
 
-TABLE_NAME = 'Inspection'
+# Validation schemas
+try:
+    from .schemas.db import validate_inspection_metadata, validate_inspection_item
+except Exception:
+    # If imports fail in local runs, define no-op validators
+    def validate_inspection_metadata(payload):
+        return payload
+    def validate_inspection_item(payload):
+        return payload
+
+# Hardcoded canonical table names (backend stable)
+TABLE_INSPECTION_ITEMS = 'InspectionItems'
+INSPECTION_DATA_TABLE = 'InspectionMetadata'
+TABLE_INSPECTION_IMAGES = 'InspectionImages'
+VENUE_ROOM_TABLE = 'VenueRooms'
+# Backwards compatibility: TABLE_NAME for code that expects legacy name
+TABLE_NAME = TABLE_INSPECTION_ITEMS
+
 
 def _now_local_iso():
     # Return ISO8601 timestamp in local timezone (GMT+8)
@@ -30,44 +47,71 @@ def build_response(status_code, body):
 
 
 def lambda_handler(event, context):
+    # DEPRECATED: This handler has been superseded by the modular `save_inspection` package
+    # and the `get_inspections` handler. It remains in the repository only for history.
+    # To enforce server-authoritative completion semantics, this endpoint is now disabled.
     method = event.get('httpMethod') or event.get('requestContext', {}).get('http', {}).get('method')
     if method == 'OPTIONS':
         return build_response(204, {})
 
-    try:
-        body = {}
-        if event.get('body'):
+    return build_response(410, {'message': 'deprecated', 'detail': 'inspections_deprecated handler disabled. Use save_inspection and get_inspections instead.'})
+
+        # Helper to read/update InspectionMetadata robustly by trying common PK names
+        def _read_inspection_metadata(iid):
             try:
-                body = json.loads(event['body'])
+                insp_table = dynamodb.Table(INSPECTION_DATA_TABLE)
+                # Try common key names
+                for k in ('inspectionId', 'inspection_id'):
+                    try:
+                        resp = insp_table.get_item(Key={k: iid})
+                        item = resp.get('Item')
+                        if item is not None:
+                            return (k, item)
+                    except Exception:
+                        pass
+                return (None, None)
             except Exception:
-                body = event['body'] or {}
+                return (None, None)
 
-        # If body contains nested JSON string in 'body', try to parse it
-        if isinstance(body, dict) and isinstance(body.get('body'), str):
+        def _update_inspection_metadata(iid, update_expr, expr_vals):
             try:
-                nested = json.loads(body['body'])
-                for k, v in nested.items():
-                    if k not in body:
-                        body[k] = v
-            except Exception:
-                pass
+                insp_table = dynamodb.Table(INSPECTION_DATA_TABLE)
+                success = False
+                last_err = None
+                # If caller used a reserved attribute name placeholder like '#s', map it to the real attribute name
+                expr_names = None
+                if update_expr and '#s' in update_expr:
+                    expr_names = {'#s': 'status'}
 
-        # small helpers to be tolerant of different payload shapes
-        def _coalesce(*vals):
-            for v in vals:
-                if v is not None and v != '':
-                    return v
-            return None
-
-        action = body.get('action') or body.get('Action')
-        print('action:', action)
-
-        table = dynamodb.Table(TABLE_NAME)
+                # Try to update using both key names; prefer inspectionId
+                for k in ('inspectionId', 'inspection_id'):
+                    try:
+                        kwargs = {
+                            'Key': {k: iid},
+                            'UpdateExpression': update_expr,
+                            'ExpressionAttributeValues': expr_vals
+                        }
+                        if expr_names:
+                            kwargs['ExpressionAttributeNames'] = expr_names
+                        resp = insp_table.update_item(**kwargs)
+                        debug(f"_update_inspection_metadata: update attempt success for key={k}, inspection={iid}, resp_attributes_snippet={str(resp.get('Attributes') or '')[:200]}")
+                        success = True
+                        break
+                    except Exception as e:
+                        debug(f"_update_inspection_metadata: update attempt failed for key={k}, inspection={iid}, err={e}")
+                        last_err = e
+                        continue
+                if not success:
+                    debug(f"_update_inspection_metadata: all attempts failed for inspection={iid}, last_err={last_err}")
+                return success
+            except Exception as e:
+                debug(f"_update_inspection_metadata: exception during update for inspection={iid}: {e}")
+                return False
 
         # Helper: check completion for an inspection against venue definition
         def check_inspection_complete(inspection_id, venue_id):
             # load venue rooms/items
-            vtable = dynamodb.Table('VenueRoomData')
+            vtable = dynamodb.Table(VENUE_ROOM_TABLE)
             vresp = vtable.get_item(Key={'venueId': venue_id})
             venue = vresp.get('Item') or {}
             rooms = venue.get('rooms') or []
@@ -81,6 +125,7 @@ def lambda_handler(event, context):
 
             total_expected = len(expected)
             if total_expected == 0:
+                debug(f"check_inspection_complete: inspection={inspection_id}, venue={venue_id}, no expected items found")
                 return {'complete': False, 'reason': 'no expected items found', 'total_expected': 0}
 
             # Discover pk attr
@@ -91,135 +136,41 @@ def lambda_handler(event, context):
 
             from boto3.dynamodb.conditions import Key
             resp = table.query(KeyConditionExpression=Key(pk_attr).eq(inspection_id))
-            items = resp.get('Items', [])
-            present = set()
+            items = resp.get('Items', []) or []
+
+            # Build a quick lookup map of statuses for expected items and count passes
+            status_map = {}
+            pass_count = 0
             for it in items:
                 roomid = it.get('roomId')
                 itemid = it.get('itemId')
-                status = it.get('status')
-                # Only count an item as present when it is a PASS — completion requires every expected item to be PASS
-                if status == 'pass':
-                    present.add((roomid, itemid))
+                status = (it.get('status') or '').lower()
+                if roomid and itemid:
+                    status_map[(roomid, itemid)] = status
+                    if status == 'pass':
+                        pass_count += 1
 
-            missing = [ {'roomId': r, 'itemId': i} for (r,i) in expected if (r,i) not in present ]
-            return {'complete': len(missing) == 0, 'missing': missing, 'total_expected': total_expected, 'completed_count': total_expected - len(missing)}
+            # Verify every expected item is a PASS; return early on the first non-pass to save work
+            missing = []
+            for (r, i) in expected:
+                st = status_map.get((r, i))
+                if st != 'pass':
+                    missing.append({'roomId': r, 'itemId': i, 'found': st})
+                    debug(f"check_inspection_complete: inspection={inspection_id}, venue={venue_id}, expected_total={total_expected}, non_pass_found={{'roomId': r, 'itemId': i, 'status': st}}, pass_count={pass_count}")
+                    return {'complete': False, 'missing': missing, 'total_expected': total_expected, 'completed_count': pass_count}
+
+            # All expected items are PASS
+            debug(f"check_inspection_complete: inspection={inspection_id}, venue={venue_id}, all expected items PASS, total_expected={total_expected}, pass_count={pass_count}")
+            return {'complete': True, 'missing': [], 'total_expected': total_expected, 'completed_count': pass_count}
 
         if action == 'save_inspection':
-            ins = body.get('inspection') or body
-            # support both id and inspection_id
-            inspection_id = ins.get('inspection_id') or ins.get('id')
-            room_id = ins.get('roomId') or ins.get('room_id')
-            items = ins.get('items') or []
-
-            if not inspection_id:
-                return build_response(400, {'message': 'inspection_id is required'})
-
-            now = _now_local_iso()
-            # Discover table key schema to ensure we write the correct attribute names
-            client = boto3.client('dynamodb')
+            # Delegate to modular save_inspection handler
             try:
-                desc = client.describe_table(TableName=TABLE_NAME)
-                key_schema = desc.get('Table', {}).get('KeySchema', [])
-                print('Table key schema:', key_schema)
-                pk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'HASH'), 'inspection_id')
-                sk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'RANGE'), None)
+                from save_inspection.lambda_function import lambda_handler as save_lambda_handler
+                return save_lambda_handler(event, context)
             except Exception as e:
-                print('Failed to describe table:', e)
-                # fallback to expected names
-                pk_attr = 'inspection_id'
-                sk_attr = None
-
-            # If no items were provided, write a meta record so the inspection can be resumed later
-            if len(items) == 0:
-                try:
-                    key = {pk_attr: inspection_id}
-                    if sk_attr:
-                        key[sk_attr] = '__meta__'
-                    # Prefer explicit createdBy/inspectorName, fall back to updatedBy if provided
-                    created_by = _coalesce(ins.get('createdBy'), ins.get('inspectorName'), ins.get('updatedBy'))
-                    venue_id_val = _coalesce(ins.get('venueId'), ins.get('venue_id'), (ins.get('venue') or {}).get('id'))
-                    venue_name_val = _coalesce(ins.get('venueName'), ins.get('venue_name'), (ins.get('venue') or {}).get('name'))
-                    # meta rows should NOT include room fields; inspections can span multiple rooms
-                    room_id_val = None
-
-                    # If venue id missing for meta save, try to resolve by name as above
-                    if not venue_id_val and venue_name_val:
-                        try:
-                            vtable = dynamodb.Table('VenueRoomData')
-                            vresp = vtable.scan()
-                            found = [it for it in (vresp.get('Items') or []) if (it.get('name') or '').lower() == (venue_name_val or '').lower()]
-                            if found:
-                                venue_id_val = found[0].get('venueId') or found[0].get('id')
-                                print('Resolved meta venue_id by name:', venue_id_val)
-                        except Exception as e:
-                            print('Failed to resolve meta venue id by name:', e)
-
-                    print('Saving meta for inspection:', inspection_id, 'resolved venueId:', venue_id_val, 'venueName:', venue_name_val, 'roomId:', room_id_val)
-
-                    # Load existing meta (if any) to avoid overwriting fields with null when client omits them
-                    existing_meta = None
-                    try:
-                        get_key = {pk_attr: inspection_id}
-                        if sk_attr:
-                            get_key[sk_attr] = '__meta__'
-                        resp_get = table.get_item(Key=get_key)
-                        existing_meta = resp_get.get('Item') or {}
-                    except Exception:
-                        existing_meta = None
-
-                    merged_created_at = existing_meta.get('createdAt') if existing_meta and existing_meta.get('createdAt') else now
-                    merged_created_by = existing_meta.get('createdBy') if existing_meta and existing_meta.get('createdBy') else created_by
-                    merged_venue_id = existing_meta.get('venueId') if existing_meta and (existing_meta.get('venueId') is not None) else venue_id_val
-                    merged_venue_name = existing_meta.get('venueName') if existing_meta and (existing_meta.get('venueName') is not None) else venue_name_val
-
-                    item = {pk_attr: inspection_id, 'createdAt': merged_created_at, 'updatedAt': now, 'createdBy': merged_created_by, 'updatedBy': ins.get('updatedBy') or merged_created_by, 'venueId': merged_venue_id, 'venueName': merged_venue_name, 'venue_name': merged_venue_name, 'status': ins.get('status') or (existing_meta.get('status') if existing_meta else 'in-progress')}
-                    if sk_attr:
-                        item[sk_attr] = '__meta__'
-
-                    # Persist the merged meta row using put_item to ensure a full canonical meta exists
-                    try:
-                        table.put_item(Item=item)
-                    except Exception as e:
-                        print('Failed to put meta item after merge:', e)
-
-                    # Upsert into InspectionData and return it so frontend has consistent metadata
-                    insp_data_row = None
-                    try:
-                        insp_data_table = dynamodb.Table('InspectionData')
-                        # Merge with existing InspectionData to avoid wiping venue fields
-                        try:
-                            resp_meta = insp_data_table.get_item(Key={'inspection_id': inspection_id})
-                            existing_data = resp_meta.get('Item') or {}
-                        except Exception:
-                            existing_data = {}
-
-                        insp_data_item = {
-                            'inspection_id': inspection_id,
-                            'createdAt': existing_data.get('createdAt') or item.get('createdAt'),
-                            'updatedAt': now,
-                            'createdBy': existing_data.get('createdBy') or item.get('createdBy'),
-                            'updatedBy': item.get('updatedBy'),
-                            'inspectorName': existing_data.get('inspectorName') or item.get('createdBy'),
-                            'venueId': existing_data.get('venueId') if existing_data.get('venueId') is not None else item.get('venueId'),
-                            'venueName': existing_data.get('venueName') if existing_data.get('venueName') is not None else item.get('venueName'),
-                            'venue_name': existing_data.get('venue_name') if existing_data.get('venue_name') is not None else item.get('venue_name'),
-                            'status': item.get('status') or existing_data.get('status') or 'in-progress',
-                        }
-
-                        insp_data_table.put_item(Item=insp_data_item)
-
-                        try:
-                            resp_meta = insp_data_table.get_item(Key={'inspection_id': inspection_id})
-                            insp_data_row = resp_meta.get('Item')
-                        except Exception:
-                            insp_data_row = None
-                    except Exception as e:
-                        print('Failed to upsert InspectionData meta on save_inspection(meta):', e)
-
-                    return build_response(200, {'message': 'Saved (meta)', 'inspection_id': inspection_id, 'inspectionData': insp_data_row})
-                except Exception as e:
-                    print('Failed to save inspection meta:', e)
-                    return build_response(500, {'message': 'Failed to save inspection meta', 'error': str(e)})
+                print('Failed to delegate save_inspection to modular handler:', e)
+                return build_response(500, {'message': 'Failed to save inspection (delegation error)', 'error': str(e)})
 
             # allow saving even a single item at a time (upsert semantics)
 
@@ -229,6 +180,16 @@ def lambda_handler(event, context):
                 item_id = it.get('itemId') or it.get('id')
                 if not item_id:
                     # skip malformed
+                    continue
+
+                # Validate the item payload; attach inspection and room identifiers
+                try:
+                    validated_item = validate_inspection_item({**it, 'inspection_id': inspection_id, 'room_id': room_id, 'item_id': item_id})
+                except Exception:
+                    validated_item = None
+                if validated_item is None:
+                    # Skip invalid item payloads rather than failing the whole batch
+                    print('Skipping invalid inspection item payload:', it)
                     continue
 
                 key = {pk_attr: inspection_id}
@@ -284,39 +245,34 @@ def lambda_handler(event, context):
                     # return an error rather than falling back to put_item which could mask issues
                     return build_response(500, {'message': 'Failed to save inspection items', 'error': str(e)})
 
-            # After saving, optionally check completeness if venueId present
+            # After saving, check completeness only as part of the full Save action
             completeness = None
             try:
                 if ins.get('venueId'):
                     try:
-                        completeness = check_inspection_complete(inspection_id, ins.get('venueId'))
+                        # If any of the provided items are not PASS, the inspection cannot be complete
+                        provided_non_pass = any(((it.get('status') or '').lower() != 'pass') for it in items)
+                        debug(f"save_inspection: inspection={inspection_id}, provided_items={len(items)}, provided_non_pass={provided_non_pass}")
+                        if provided_non_pass:
+                            completeness = {'complete': False, 'reason': 'non-pass item in provided payload'}
+                            debug(f"save_inspection: skipping server completeness check for inspection={inspection_id} due to non-pass in payload")
+                        else:
+                            completeness = check_inspection_complete(inspection_id, ins.get('venueId'))
                     except Exception as e:
-                        print('Failed to check completeness after save:', e)
+                        debug(f'Failed to check completeness after save: {e}')
 
-                    # If fully complete (all PASS), mark the inspection meta as completed so it no longer appears as ongoing
+                    debug(f"save_inspection: completeness result for inspection={inspection_id}: {completeness}")
+                    # If fully complete (all PASS), mark the canonical InspectionMetadata row as completed
                     if completeness and completeness.get('complete') == True:
                         try:
-                            meta_key = {pk_attr: inspection_id}
-                            if sk_attr:
-                                meta_key[sk_attr] = '__meta__'
-                            table.update_item(
-                                Key=meta_key,
-                                UpdateExpression='SET #s = :s, updatedAt = :u, completedAt = :c, updatedBy = :ub',
-                                ExpressionAttributeNames={'#s': 'status'},
-                                ExpressionAttributeValues={':s': 'completed', ':u': now, ':c': now, ':ub': ins.get('inspectorName') or ins.get('updatedBy') or ins.get('createdBy')}
-                            )
-                        except Exception as e:
-                            print('Failed to update meta status after save:', e)
-
-                        # Also update InspectionData status to reflect completion
-                        try:
-                            insp_data_table = dynamodb.Table('InspectionData')
-                            insp_data_table.update_item(
-                                Key={'inspection_id': inspection_id},
-                                UpdateExpression='SET #s = :s, updatedAt = :u, completedAt = :c, updatedBy = :ub',
-                                ExpressionAttributeNames={'#s': 'status'},
-                                ExpressionAttributeValues={':s': 'completed', ':u': now, ':c': now, ':ub': ins.get('inspectorName') or ins.get('createdBy')}
-                            )
+                            updated = _update_inspection_metadata(inspection_id, 'SET #s = :s, updatedAt = :u, completedAt = :c, updatedBy = :ub', {':s': 'completed', ':u': now, ':c': now, ':ub': ins.get('inspectorName') or ins.get('createdBy')})
+                            print(f"save_inspection: _update_inspection_metadata returned: {updated} for inspection={inspection_id}")
+                            # Read back metadata to verify
+                            try:
+                                k, meta_after_update = _read_inspection_metadata(inspection_id)
+                                print(f"save_inspection: metadata after completion update for inspection={inspection_id}: key={k}, meta={meta_after_update}")
+                            except Exception as e:
+                                print(f"save_inspection: failed to read metadata after update for inspection={inspection_id}: {e}")
                         except Exception as e:
                             print('Failed to update InspectionData status after save:', e)
             except Exception as e:
@@ -325,13 +281,32 @@ def lambda_handler(event, context):
             # Ensure InspectionData exists/updated for this inspection and return it
             insp_data_row = None
             try:
-                insp_data_table = dynamodb.Table('InspectionData')
-                resp_meta = insp_data_table.get_item(Key={'inspection_id': inspection_id})
-                insp_data_row = resp_meta.get('Item')
+                insp_data_table = dynamodb.Table(INSPECTION_DATA_TABLE)
+                # Read existing metadata and log it for debugging
+                try:
+                    k, existing_meta_before = _read_inspection_metadata(inspection_id)
+                    existing_meta_before = existing_meta_before or {}
+                    debug('InspectionData before update (save_inspection) key=' + str(k) + ' venueId=' + str(existing_meta_before.get('venueId')) + ' venueName=' + str(existing_meta_before.get('venueName')))
+                except Exception as e:
+                    debug('Failed to fetch InspectionData before update (save_inspection): ' + str(e))
+                try:
+                    _update_inspection_metadata(inspection_id, 'SET updatedAt = :u, updatedBy = :ub', {':u': now, ':ub': ins.get('inspectorName') or ins.get('updatedBy') or ins.get('createdBy')})
+                except Exception:
+                    pass
+
+                # Read metadata using robust reader
+                try:
+                    k, meta_after = _read_inspection_metadata(inspection_id)
+                    insp_data_row = meta_after
+                    print('InspectionData after update (save_inspection) key=', k, 'venueId=', (meta_after or {}).get('venueId'), 'venueName=', (meta_after or {}).get('venueName'))
+                except Exception:
+                    insp_data_row = None
             except Exception:
                 insp_data_row = None
 
-            return build_response(200, {'message': 'Saved', 'written': written, 'complete': completeness, 'inspectionData': insp_data_row})
+            # Include debug logs in the response body to aid troubleshooting
+            resp_body = {'message': 'Saved', 'written': written, 'complete': completeness, 'inspectionData': insp_data_row, 'debug': debug_logs}
+            return build_response(200, resp_body)
 
         # Save a single item (upsert) - allows saving anytime
         if action == 'save_item':
@@ -425,7 +400,15 @@ def lambda_handler(event, context):
 
                     # Keep InspectionData metadata current for quick listing (set updatedBy and venue_name)
                     try:
-                        insp_data_table = dynamodb.Table('InspectionData')
+                        insp_data_table = dynamodb.Table(INSPECTION_DATA_TABLE)
+                        # Read existing metadata before patching
+                        try:
+                            k, existing_before = _read_inspection_metadata(inspection_id)
+                            print('InspectionData before update (save_item) key=', k, 'venueId=', (existing_before or {}).get('venueId'), 'venueName=', (existing_before or {}).get('venueName'))
+                        except Exception as e:
+                            print('Failed to read InspectionData before save_item update:', e)
+                            existing_before = {}
+
                         # Update InspectionData without overwriting venue info unless provided in payload
                         id_vals = {':u': now, ':ub': ins.get('inspectorName') or ins.get('updatedBy') or (ins.get('item') or {}).get('inspectorName'), ':n': ins.get('inspectorName') or (ins.get('item') or {}).get('inspectorName')}
                         update_parts = ['updatedAt = :u', 'updatedBy = :ub', 'inspectorName = :n']
@@ -436,43 +419,28 @@ def lambda_handler(event, context):
                             update_parts.append('venueName = :vn')
                             id_vals[':vn'] = ins.get('venueName')
                             id_vals[':vn2'] = ins.get('venueName') or ins.get('venue_name')
-                        print('InspectionData update (save_item):', update_parts, 'vals:', {k: (v if k in [':u',':ub',':n'] else '...') for k,v in id_vals.items()})
-                        insp_data_table.update_item(
-                            Key={'inspection_id': inspection_id},
-                            UpdateExpression='SET ' + ', '.join(update_parts),
-                            ExpressionAttributeValues=id_vals
-                        )
+                        print('InspectionData update (save_item):', update_parts, 'vals keys:', list(id_vals.keys()))
+                        try:
+                            _update_inspection_metadata(inspection_id, 'SET ' + ', '.join(update_parts), id_vals)
+                        except Exception as e:
+                            print('Failed to update InspectionData on save_item:', e)
+
+                        try:
+                            k, existing_after = _read_inspection_metadata(inspection_id)
+                            existing_after = existing_after or {}
+                            print('InspectionData after update (save_item) key=', k, 'venueId=', existing_after.get('venueId'), 'venueName=', existing_after.get('venueName'))
+                        except Exception as e:
+                            print('Failed to read InspectionData after save_item update:', e)
                     except Exception as e:
                         print('Failed to update InspectionData on save_item:', e)
                 except Exception as e:
                     print('Failed to upsert single item:', e)
                     return build_response(500, {'message': 'Failed to save item', 'error': str(e)})
 
-                # After single-item save, check completeness and mark meta completed if fully PASS
-                meta_completed = False
-                try:
-                    c = check_inspection_complete(inspection_id, ins.get('venueId') or ins.get('venue_id') or ins.get('venueId'))
-                    if c and c.get('complete'):
-                        meta_completed = True
-                        try:
-                            meta_key = {pk_attr: inspection_id}
-                            if sk_attr:
-                                meta_key[sk_attr] = '__meta__'
-                            table.update_item(
-                                Key=meta_key,
-                                UpdateExpression='SET #s = :s, updatedAt = :u, completedAt = :c, updatedBy = :ub',
-                                ExpressionAttributeNames={'#s': 'status'},
-                                ExpressionAttributeValues={':s': 'completed', ':u': now, ':c': now, ':ub': ins.get('inspectorName') or ins.get('updatedBy') or ins.get('createdBy')}
-                            )
-                        except Exception as e:
-                            print('Failed to mark meta as completed after save_item:', e)
-                except Exception as e:
-                    print('Failed to check completeness after save_item:', e)
-
-                # Update/fetch InspectionData for quick frontend listing
+                # Update/fetch InspectionData for quick frontend listing (do not auto-complete on single-item saves)
                 insp_data_row = None
                 try:
-                    insp_data_table = dynamodb.Table('InspectionData')
+                    insp_data_table = dynamodb.Table(INSPECTION_DATA_TABLE)
                     # Build InspectionData update dynamically to avoid nulling venue fields
                     expr_vals = {':u': now, ':ub': ins.get('inspectorName') or ins.get('updatedBy') or (ins.get('item') or {}).get('inspectorName'), ':n': ins.get('inspectorName') or (ins.get('item') or {}).get('inspectorName')}
                     update_parts = ['updatedAt = :u', 'updatedBy = :ub', 'inspectorName = :n']
@@ -482,24 +450,21 @@ def lambda_handler(event, context):
                     if ins.get('venueName') is not None:
                         update_parts.append('venueName = :vn')
                         expr_vals[':vn'] = ins.get('venueName')
-                    if meta_completed:
-                        update_parts.append('completedAt = :c')
-                        expr_vals[':c'] = now
                     print('InspectionData update (post-save):', update_parts, 'vals keys:', list(expr_vals.keys()))
-                    insp_data_table.update_item(
-                        Key={'inspection_id': inspection_id},
-                        UpdateExpression='SET ' + ', '.join(update_parts),
-                        ExpressionAttributeValues=expr_vals
-                    )
                     try:
-                        resp_meta = insp_data_table.get_item(Key={'inspection_id': inspection_id})
-                        insp_data_row = resp_meta.get('Item')
+                        _update_inspection_metadata(inspection_id, 'SET ' + ', '.join(update_parts), expr_vals)
+                    except Exception as e:
+                        print('Failed to update/fetch InspectionData after save_item:', e)
+                    try:
+                        k, insp_data_row = _read_inspection_metadata(inspection_id)
                     except Exception:
                         insp_data_row = None
                 except Exception as e:
                     print('Failed to update/fetch InspectionData after save_item:', e)
 
-                return build_response(200, {'message': 'Saved item', 'item': record, 'inspectionData': insp_data_row})
+                # Return debug logs with single-item saves as well
+                resp_body = {'message': 'Saved item', 'item': record, 'inspectionData': insp_data_row, 'debug': debug_logs}
+                return build_response(200, resp_body)
             except Exception as e:
                 print('Failed to save single item:', e)
                 return build_response(500, {'message': 'Failed to save item', 'error': str(e)})
@@ -531,7 +496,7 @@ def lambda_handler(event, context):
                 # If venue id isn't provided but we have a venue name, try to resolve the id server-side
                 if not venue_id_val and venue_name_val:
                     try:
-                        vtable = dynamodb.Table('VenueRoomData')
+                        vtable = dynamodb.Table(VENUE_ROOM_TABLE)
                         # Scan the table and do a simple name match in Python to avoid relying on Expr imports
                         vresp = vtable.scan()
                         found_items = [it for it in (vresp.get('Items') or []) if (it.get('name') or '').lower() == (venue_name_val or '').lower()]
@@ -542,37 +507,34 @@ def lambda_handler(event, context):
                         print('Failed to resolve venue id by name:', e)
                 print('create_inspection resolved fields:', {'venueId': venue_id_val, 'venueName': venue_name_val, 'roomId': room_id_val})
 
-                item = {pk_attr: inspection_id, 'createdAt': now, 'updatedAt': now, 'createdBy': created_by, 'updatedBy': ins.get('updatedBy') or created_by, 'venueId': venue_id_val, 'venueName': venue_name_val, 'venue_name': venue_name_val, 'status': ins.get('status') or 'in-progress', 'completedAt': ins.get('completedAt') or None} 
-                if sk_attr:
-                    item[sk_attr] = '__meta__'
-                table.put_item(Item=item)
-
-                # Also create/update InspectionData table for this inspection and return it
+                # Do not write a '__meta__' item into the InspectionItems table. Persist canonical metadata in InspectionMetadata.
+                print('create_inspection: received payload ins=', ins)
                 insp_data_row = None
                 try:
-                    insp_data_table = dynamodb.Table('InspectionData')
+                    insp_data_table = dynamodb.Table(INSPECTION_DATA_TABLE)
                     insp_data_table.put_item(Item={
+                        'inspectionId': inspection_id,
                         'inspection_id': inspection_id,
-                        'createdAt': item.get('createdAt'),
+                        'createdAt': now,
                         'updatedAt': now,
-                        'createdBy': item.get('createdBy'),
-                        'updatedBy': item.get('updatedBy'),
-                        'inspectorName': item.get('inspectorName') or item.get('createdBy'),
-                        'venueId': item.get('venueId'),
-                        'venueName': item.get('venueName'),
-                        'venue_name': item.get('venue_name'),
-                        'status': item.get('status') or 'in-progress',
-                        'completedAt': item.get('completedAt')
+                        'createdBy': created_by,
+                        'updatedBy': ins.get('updatedBy') or created_by,
+                        'inspectorName': ins.get('inspectorName') or created_by,
+                        'venueId': venue_id_val,
+                        'venueName': venue_name_val,
+                        'venue_name': venue_name_val,
+                        'status': ins.get('status') or 'in-progress',
+                        'completedAt': ins.get('completedAt') or None
                     })
                     try:
-                        resp_meta = insp_data_table.get_item(Key={'inspection_id': inspection_id})
-                        insp_data_row = resp_meta.get('Item')
+                        k, insp_data_row = _read_inspection_metadata(inspection_id)
                     except Exception:
                         insp_data_row = None
                 except Exception as e:
                     print('Failed to upsert InspectionData meta on create_inspection:', e)
 
-                return build_response(200, {'message': 'Created', 'inspection_id': inspection_id, 'inspectionData': insp_data_row})
+                resp_body = {'message': 'Created', 'inspection_id': inspection_id, 'inspectionData': insp_data_row, 'debug': debug_logs}
+                return build_response(200, resp_body)
             except Exception as e:
                 print('Failed to create inspection meta:', e)
                 return build_response(500, {'message': 'Failed to create inspection', 'error': str(e)})
@@ -716,10 +678,16 @@ def lambda_handler(event, context):
                 return build_response(400, {'message': 'inspection_id and venueId required'})
             try:
                 result = check_inspection_complete(inspection_id, venue_id)
-                return build_response(200, result)
+                # Attach debug logs to the response
+                if isinstance(result, dict):
+                    result_with_debug = dict(result)
+                    result_with_debug['debug'] = debug_logs
+                else:
+                    result_with_debug = {'result': result, 'debug': debug_logs}
+                return build_response(200, result_with_debug)
             except Exception as e:
-                print('Failed to check completion:', e)
-                return build_response(500, {'message': 'Failed to check completion', 'error': str(e)})
+                debug(f'Failed to check completion: {e}')
+                return build_response(500, {'message': 'Failed to check completion', 'error': str(e), 'debug': debug_logs})
 
         # Delete all items & meta rows for an inspection
         if action == 'delete_inspection':
@@ -834,7 +802,7 @@ def lambda_handler(event, context):
                 # Also attempt to delete any metadata in a separate InspectionData table (best-effort)
                 insp_data_deleted = False
                 try:
-                    insp_data_table = dynamodb.Table('InspectionData')
+                    insp_data_table = dynamodb.Table(INSPECTION_DATA_TABLE)
                     try:
                         resp_del = insp_data_table.delete_item(Key={'inspection_id': inspection_id})
                         # If delete_item returns attributes, assume deletion occurred

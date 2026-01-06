@@ -391,9 +391,10 @@ def lambda_handler(event, context):
         else:
             params = body
 
-        inspection_id = params.get('inspectionId')
-        room_id = params.get('roomId')
-        item_id = params.get('itemId')  # optional
+        # Accept either camelCase or snake_case request fields for compatibility
+        inspection_id = params.get('inspectionId') or params.get('inspection_id')
+        room_id = params.get('roomId') or params.get('room_id')
+        item_id = params.get('itemId') or params.get('item_id')  # optional
         signed_flag = params.get('signed')
         # default: sign URLs when retrieving unless caller explicitly requests otherwise
         def parse_bool(v):
@@ -413,22 +414,48 @@ def lambda_handler(event, context):
         if not all([inspection_id, room_id]):
             return build_response(400, {'message': 'inspectionId and roomId are required'})
 
-        # Build sortKey prefix
+        # Build sortKey prefix (roomId# or roomId#itemId)
         if item_id:
             prefix = f"{room_id}#{item_id}"
         else:
             prefix = f"{room_id}#"
 
         table = dynamodb.Table(TABLE_NAME)
-        response = table.query(
-            KeyConditionExpression=Key('inspection_id').eq(inspection_id) & Key('room_id#item_id#image_id').begins_with(prefix),
-        )
 
-        items = response.get('Items', [])
+        # Try queries with both camelCase and snake_case key names for backward compatibility
+        partition_keys = ['inspectionId', 'inspection_id']
+        sort_key_names = ['roomId#itemId#imageId', 'room_id#item_id#image_id']
+        items = []
+        used_pk = None
+        used_sk = None
+        for pk in partition_keys:
+            for sk in sort_key_names:
+                try:
+                    resp = table.query(
+                        KeyConditionExpression=Key(pk).eq(inspection_id) & Key(sk).begins_with(prefix),
+                    )
+                    tmp_items = resp.get('Items', [])
+                    if tmp_items:
+                        items = tmp_items
+                        used_pk = pk
+                        used_sk = sk
+                        debug('list_images_db: query found %d items using pk=%s sk=%s', len(items), pk, sk)
+                        break
+                except Exception as e:
+                    debug('list_images_db: query attempt failed for pk=%s sk=%s: %s', pk, sk, e)
+            if items:
+                break
+
+        # If still empty, items will be [], and processing will continue (returns empty list)
         images = []
         signed_count = 0
         for it in items:
-            sort_key = it.get('room_id#item_id#image_id')
+            # Read whichever sort-key attribute exists (support camelCase and snake_case)
+            sort_key = None
+            if used_sk:
+                sort_key = it.get(used_sk)
+            if sort_key is None:
+                sort_key = it.get('room_id#item_id#image_id') or it.get('roomId#itemId#imageId')
             parts = sort_key.split('#') if sort_key else []
             item_id_value = parts[1] if len(parts) >= 2 else None
             image_id_value = parts[2] if len(parts) >= 3 else None
@@ -556,7 +583,12 @@ def lambda_handler(event, context):
             if show_s3:
                 s3 = boto3.client('s3')
                 # Use inspection-based prefix if available
-                prefix = f"images/inspection-{inspection_id}/" if inspection_id else ''
+                # Use standardized prefix generation
+                try:
+                    from .utils.id_utils import s3_prefix_for_inspection
+                    prefix = s3_prefix_for_inspection(inspection_id) if inspection_id else ''
+                except Exception:
+                    prefix = f"images/{inspection_id}/" if inspection_id else ''
                 resp = s3.list_objects_v2(Bucket=BUCKET_NAME, Prefix=prefix, MaxKeys=200)
                 s3_keys = [o.get('Key') for o in resp.get('Contents', [])] if resp.get('Contents') else []
                 debug('list_images_db: S3 keys for prefix=%s: found %d', prefix, len(s3_keys))

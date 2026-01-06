@@ -53,26 +53,100 @@ def lambda_handler(event, context):
         s3_key = None
         found_sort_key = None
 
+        # Discover InspectionImages key schema (PK & optional SK)
+        try:
+            client = boto3.client('dynamodb')
+            desc = client.describe_table(TableName=TABLE_NAME)
+            key_schema = desc.get('Table', {}).get('KeySchema', [])
+            pk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'HASH'), 'inspection_id')
+            sk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'RANGE'), None)
+        except Exception as e:
+            print('Failed to describe table for delete_s3_by_db_entry:', e)
+            pk_attr = 'inspection_id'
+            sk_attr = 'room_id#item_id#image_id'
+
+        # Try to resolve by imageId first (prefer exact match)
         if image_id:
             sort_key = f"{room_id}#{item_id}#{image_id}"
-            resp = table.get_item(Key={'inspection_id': inspection_id, 'room_id#item_id#image_id': sort_key})
-            item = resp.get('Item')
-            if not item:
-                return build_response(404, {'message': 'Image metadata not found'})
-            s3_key = item.get('s3Key')
-            found_sort_key = sort_key
+
+            # Try querying using several candidate PK/SK attribute names to handle naming variations
+            pk_candidates = [pk_attr, 'inspectionId']
+            sk_candidates = [sk_attr, 'roomId#itemId#imageId']
+            query_succeeded = False
+            last_exc = None
+            for p in pk_candidates:
+                for s in sk_candidates:
+                    if not s:
+                        continue
+                    try:
+                        resp = table.query(KeyConditionExpression=Key(p).eq(inspection_id), FilterExpression=Attr(s).eq(sort_key))
+                        items = resp.get('Items') or []
+                        if len(items) > 0:
+                            item = items[0]
+                            s3_key = item.get('s3Key')
+                            found_sort_key = item.get(s) or sort_key
+                            found_sk_attr = s
+                            query_succeeded = True
+                            break
+                    except Exception as e:
+                        last_exc = e
+                        # try next candidate
+                        continue
+                if query_succeeded:
+                    break
+
+            if not query_succeeded:
+                # As a last resort, try get_item with common SK names
+                tried = False
+                for name in ('room_id#item_id#image_id', 'roomId#itemId#imageId'):
+                    for p in pk_candidates:
+                        try:
+                            resp = table.get_item(Key={p: inspection_id, name: sort_key})
+                            item = resp.get('Item')
+                            if item:
+                                s3_key = item.get('s3Key')
+                                found_sort_key = sort_key
+                                found_sk_attr = name
+                                tried = True
+                                break
+                        except Exception as _e:
+                            last_exc = _e
+                            continue
+                    if tried:
+                        break
+
+                if not tried and not query_succeeded:
+                    print('Image metadata not found; last err:', last_exc)
+                    return build_response(404, {'message': 'Image metadata not found'})
+
             if not s3_key:
                 return build_response(400, {'message': 's3Key missing in metadata'})
+
         else:
             # try to find the DB entry by s3Key
             try:
-                resp = table.query(KeyConditionExpression=Key('inspection_id').eq(inspection_id), FilterExpression=Attr('s3Key').eq(s3_key_param))
-                items = resp.get('Items') or []
-                if len(items) > 0:
-                    item = items[0]
-                    s3_key = item.get('s3Key')
-                    found_sort_key = item.get('room_id#item_id#image_id')
-                else:
+                pk_candidates = [pk_attr, 'inspectionId', 'inspection_id']
+                query_found = False
+                for p in pk_candidates:
+                    try:
+                        resp = table.query(KeyConditionExpression=Key(p).eq(inspection_id), FilterExpression=Attr('s3Key').eq(s3_key_param))
+                        items = resp.get('Items') or []
+                        if len(items) > 0:
+                            item = items[0]
+                            s3_key = item.get('s3Key')
+                            # Determine sort key name if present
+                            if sk_attr and item.get(sk_attr):
+                                found_sort_key = item.get(sk_attr)
+                                found_sk_attr = sk_attr
+                            else:
+                                found_sort_key = item.get('room_id#item_id#image_id') or item.get('roomId#itemId#imageId')
+                                found_sk_attr = 'room_id#item_id#image_id' if item.get('room_id#item_id#image_id') else 'roomId#itemId#imageId'
+                            query_found = True
+                            break
+                    except Exception:
+                        continue
+
+                if not query_found:
                     # fall back to deleting provided s3Key directly
                     s3_key = s3_key_param
             except Exception as e:

@@ -1,7 +1,9 @@
+import { API } from '../config/api';
+
 export async function getVenues() {
   console.log('[venueApi] getVenues called');
   try {
-    const res = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/venues-query', {
+    const res = await fetch(API.venuesQuery, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'get_venues' }),
@@ -20,7 +22,15 @@ export async function getVenues() {
         items = [];
       }
     }
-    return items;
+    try {
+      const { parseVenue } = await import('../schemas/venue');
+      // Normalize each item
+      const normalized = items.map((it: any) => parseVenue(it) || it);
+      return normalized;
+    } catch (e) {
+      console.warn('getVenues: parse venue failed', e);
+      return items;
+    }
   } catch (e) {
     console.warn('getVenues failed', e);
     return [];
@@ -31,7 +41,14 @@ export async function getVenueById(venueId: string) {
   if (!venueId) return null;
   try {
     const items = await getVenues();
-    return items.find((v: any) => String(v.venueId || v.id) === String(venueId)) || null;
+    const found = items.find((v: any) => String(v.venueId || v.id) === String(venueId)) || null;
+    if (!found) return null;
+    try {
+      const { parseVenue } = await import('../schemas/venue');
+      return parseVenue(found) || found;
+    } catch (e) {
+      return found;
+    }
   } catch (e) {
     console.warn('getVenueById failed', e);
     return null;

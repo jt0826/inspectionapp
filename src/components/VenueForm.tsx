@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useToast } from './ToastProvider';
 import { ArrowLeft, Building2, Plus, Trash2, Save, Minus } from 'lucide-react';
-import { Venue, Room } from '../App';
+import type { Venue, Room } from '../types/venue';
 import LoadingOverlay from './LoadingOverlay';
+import { generateVenueId, generateRoomId, generateItemId } from '../utils/id';
 
-const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/venues-create'; // consolidated venues-create endpoint
+import { API } from '../config/api'; // consolidated venues-create endpoint
 
 interface VenueFormProps {
   venue: Venue | null;
@@ -18,21 +19,13 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
   const [address, setAddress] = useState(venue?.address || '');
   // Rooms now include items: { id, name }
   const [rooms, setRooms] = useState<any[]>(
-    venue?.rooms?.map((r: any) => ({ ...r, items: r.items || [] })) || [{ id: generateId('r'), name: '', items: [] }]
+    venue?.rooms?.map((r: any) => ({ ...r, items: r.items || [] })) || [{ id: generateRoomId(), name: '', items: [] }]
   );
 
-  function generateId(prefix: string) {
-    // Use crypto.randomUUID when available
-    try {
-      const u = (crypto as any).randomUUID ? (crypto as any).randomUUID().replace(/-/g, '') : Math.random().toString(36).substr(2, 16);
-      return `${prefix}-${u.slice(0, 8)}`;
-    } catch (e) {
-      return `${prefix}-${Math.random().toString(36).substr(2, 8)}`;
-    }
-  }
+
 
   const handleAddRoom = () => {
-    setRooms([...rooms, { id: generateId('r'), name: '', items: [] }]);
+    setRooms([...rooms, { id: generateRoomId(), name: '', items: [] }]);
   }; 
 
   const handleRemoveRoom = (index: number) => {
@@ -52,7 +45,7 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
     setRooms(
       rooms.map((room, i) =>
         i === roomIndex
-          ? { ...room, items: [...(room.items || []), { id: generateId('i'), name: '' }] }
+          ? { ...room, items: [...(room.items || []), { id: generateItemId(), name: '' }] }
           : room
       )
     );
@@ -107,17 +100,18 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
     }
 
     // Prepare payload for backend
-    const venueId = venue?.id || generateId('v');
+    const venueId = venue?.id || generateVenueId();
     const payload = {
       venueId,
       name: name.trim(),
       address: address.trim(),
       createdBy: venue?.createdBy || 'Current User',
       rooms: rooms.map((room) => ({
-        roomId: room.id || generateId('r'),
+        roomId: room.id || generateRoomId(),
         name: room.name.trim(),
-        items: (room.items || []).length > 0 ? (room.items || []).map((it: any) => ({ itemId: it.id || generateId('i'), name: it.name.trim() })) : [{ itemId: generateId('i'), name: 'General check' }]
+        items: (room.items || []).length > 0 ? (room.items || []).map((it: any) => ({ itemId: it.id || generateItemId(), name: it.name.trim() })) : [{ itemId: generateItemId(), name: 'General check' }]
       })),
+
 
     };
 
@@ -128,7 +122,7 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
       // Debug log payload
       console.log('Sending create/update payload', { action, venue: payload });
 
-      const res = await fetch(API_BASE, {
+      const res = await fetch(API.venuesCreate, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action, venue: payload }),

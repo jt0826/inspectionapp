@@ -13,59 +13,14 @@ import { getInspectionItems } from './utils/inspectionApi';
 import { VenueSelection } from './components/VenueSelection';
 import { InspectionConfirmation } from './components/InspectionConfirmation';
 import { VenueLayout } from './components/VenueLayout';
+import { API } from './config/api';
+import { generateItemId, generateInspectionId } from './utils/id';
 import { Dashboard } from './components/Dashboard';
 import { useToast } from './components/ToastProvider';
 import { getVenueById } from './utils/venueApi';
 
-export interface Venue {
-  id: string;
-  name: string;
-  address: string;
-  rooms: Room[];
-  createdAt: string;
-  updatedAt: string;
-  createdBy: string;
-}
-
-export interface Room {
-  id: string;
-  name: string;
-  items?: { id: string; name: string }[];
-}
-
-export interface Photo {
-  id: string;
-  imageId?: string | null;
-  s3Key?: string;
-  preview?: string;
-  previewUrl?: string;
-  filename?: string;
-  contentType?: string;
-  filesize?: number;
-  uploadedAt?: string;
-  uploadedBy?: string;
-  status?: 'pending' | 'uploading' | 'uploaded' | string;
-}
-
-export interface InspectionItem {
-  id: string;
-  item: string;
-  status: 'pass' | 'fail' | 'na' | 'pending' | null;
-  notes: string;
-  photos: (string | Photo)[];
-}
-
-export interface Inspection {
-  id: string;
-  venueId: string;
-  venueName: string;
-  roomId: string;
-  roomName: string;
-  timestamp?: string; // Server-provided
-  inspectorName: string;
-  items: InspectionItem[];
-  status: 'draft' | 'in-progress' | 'completed';
-}
+import type { Venue, Room } from './types/venue';
+import type { Inspection, InspectionItem, Photo } from './types/inspection';
 
 const mockVenues: Venue[] = [
   {
@@ -133,8 +88,7 @@ function AppContent() {
   const [inspectionReadOnly, setInspectionReadOnly] = useState<boolean>(false);
   // Replace hard-coded venues with data from backend
   const [venues, setVenues] = useState<Venue[]>([]);
-  // Use consolidated venueslh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/venues-query
-  const API_BASE = 'https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/venues-query'; // replace with your API base URL (venues)
+  // API base moved to `src/config/api.ts` (use `API` constants)
 
 
 
@@ -190,7 +144,7 @@ function AppContent() {
       // Persist venue selection to the inspections service for the current draft (include updated metadata)
       (async () => {
         try {
-          const resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections', {
+          const resp = await fetch(API.inspections, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -233,7 +187,7 @@ function AppContent() {
       // Persist room selection to the inspections service so the draft is fully associated (include updated metadata)
       (async () => {
         try {
-          const resp = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections', {
+          const resp = await fetch(API.inspections, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -292,18 +246,19 @@ function AppContent() {
   };
 
   const handleInspectionSubmit = (inspection: Inspection) => {
-    const completedInspection = { ...inspection, status: 'completed' as const };
-    
+    // Avoid client-side completion decision. Let the server be authoritative about completion.
+    const updatedInspection = { ...inspection, status: (inspection.status || 'in-progress') as any };
+
     if (currentInspectionId) {
       // Update existing inspection
       setInspections(inspections.map(insp => 
-        insp.id === currentInspectionId ? completedInspection : insp
+        insp.id === currentInspectionId ? updatedInspection : insp
       ));
     } else {
       // Add new inspection (legacy path)
-      setInspections([...inspections, completedInspection]);
+      setInspections([...inspections, updatedInspection]);
     }
-    
+
     setCurrentInspectionId(null);
     setSelectedVenue(null);
     setSelectedRoom(null);
@@ -320,7 +275,8 @@ function AppContent() {
   };
 
   // Called by VenueSelection when a new inspection was created on the server
-  const handleInspectionCreated = (inspectionData: any) => {
+  const handleInspectionCreated = (inspectionData: any, originVenue?: Venue | null) => {
+    console.debug('handleInspectionCreated called with inspectionData=', inspectionData, 'originVenue=', originVenue);
     const id = inspectionData.inspection_id || inspectionData.id;
     const simpleInspection: Inspection = {
       id,
@@ -328,29 +284,50 @@ function AppContent() {
       venueName: inspectionData.venueName || inspectionData.venue_name || '',
       roomId: inspectionData.roomId || inspectionData.room_id || '',
       roomName: inspectionData.roomName || inspectionData.room_name || '',
-      timestamp: inspectionData.createdAt || inspectionData.timestamp || '',
+      createdAt: inspectionData.createdAt || inspectionData.timestamp || '',
       inspectorName: inspectionData.createdBy || inspectionData.inspectorName || user?.name || 'Unknown',
       items: [],
       status: (inspectionData.status as any) || 'in-progress',
     };
 
+    // If the server response lacks venue info but we have an originVenue, prefer the originVenue (optimistic)
+    if (originVenue) {
+      console.debug('handleInspectionCreated: applying originVenue optimistically', originVenue.id);
+      simpleInspection.venueId = simpleInspection.venueId || originVenue.id;
+      simpleInspection.venueName = simpleInspection.venueName || originVenue.name;
+    }
+
     setInspections(prev => [...prev, simpleInspection]);
     setCurrentInspectionId(id);
     setIsCreatingNewInspection(false);
 
-    // Set the venue context so UI can show confirmation. Prefer local venue; otherwise mark pendingVenueId
+    // Set the venue context so UI can show confirmation. Prefer local venue; otherwise use originVenue (optimistic) or mark pendingVenueId
     const vid = simpleInspection.venueId;
-    if (vid) {
+    if (originVenue && !vid) {
+      // If we have originVenue but no vid (edge case), apply originVenue
+      console.debug('handleInspectionCreated: using originVenue for missing vid', originVenue.id);
+      setSelectedVenue(originVenue);
+      setPendingVenueId(null);
+    } else if (vid) {
       const v = venues.find(x => x.id === vid);
       if (v) {
+        console.debug('handleInspectionCreated: found local venue for vid=', vid);
         setSelectedVenue(v);
+      } else if (originVenue) {
+        console.debug('handleInspectionCreated: using originVenue for vid=', vid, 'originVenue=', originVenue?.id);
+        // Use the originVenue provided by the creator (optimistic show) and clear pending
+        setSelectedVenue(originVenue);
+        console.debug('handleInspectionCreated: clearing pendingVenueId');
+        setPendingVenueId(null);
       } else {
         // Venue not found locally: set pendingVenueId so the confirmation screen can fetch it from the server
+        console.debug('handleInspectionCreated: venue not found locally; setting pendingVenueId=', vid);
         setPendingVenueId(vid);
         setSelectedVenue(null);
       }
     } else {
       // No venue information available: clear selection and let confirmation handle it
+      console.debug('handleInspectionCreated: no venue available on created inspection and no originVenue; clearing pendingVenueId');
       setSelectedVenue(null);
       setPendingVenueId(null);
     }
@@ -388,9 +365,9 @@ function AppContent() {
               fetchInspectionItems(inspectionOrId, room.id).then((items) => {
                 if (items && items.length > 0) {
                   const mapped = items.map((it: any) => {
-                    const id = it.itemId || it.item || it.ItemId || ('item_' + Math.random().toString(36).substr(2,9));
+                    const id = it.itemId || it.item || it.ItemId || generateItemId();
                     const name = it.itemName || it.item || it.ItemName || '';
-                    return { id, item: name, status: it.status, notes: it.comments || '' };
+                    return { id, name, status: it.status, notes: it.comments || '' };
                   });
                   setEditingInspection({ ...inspection, items: mapped });
 
@@ -418,7 +395,12 @@ function AppContent() {
 
     // Otherwise, object was passed from InspectorHome (dynamo)
     const incoming = inspectionOrId;
-    const id = incoming.id || incoming.inspection_id || 'insp_' + Date.now();
+    const id = incoming.id || incoming.inspection_id;
+    if (!id) {
+      console.error('handleResumeInspection: incoming inspection object missing id', incoming);
+      // Fail early to avoid masking source-of-truth issues; caller should provide a proper id
+      return;
+    }
 
     // Upsert into local inspections state so other parts of the app can reference it
     const existing = inspections.find(i => i.id === id);
@@ -455,9 +437,9 @@ function AppContent() {
           fetchInspectionItems(id, room.id).then((items) => {
             if (items && items.length > 0) {
               const mapped = items.map((it: any) => {
-                const id = it.itemId || it.item || it.ItemId || ('item_' + Math.random().toString(36).substr(2,9));
+                const id = it.itemId || it.item || it.ItemId || generateItemId();
                 const name = it.itemName || it.item || it.ItemName || '';
-                return { id, item: name, status: it.status, notes: it.comments || '' };
+                return { id, name, status: it.status, notes: it.comments || '' };
               });
               setEditingInspection({ ...simpleInspection, items: mapped });
             }
@@ -504,8 +486,15 @@ function AppContent() {
     }
 
     if (selectedVenue) {
+      // Normal flow: go back to the room list within the selected venue
       setSelectedRoom(null);
       setCurrentView('rooms');
+    } else {
+      // No venue selected (e.g., a newly-created inspection without venue context) — navigate to Home
+      // Clear inspection context to avoid leaving stale state
+      setCurrentInspectionId(null);
+      setSelectedRoom(null);
+      setCurrentView('home');
     }
   };
 
@@ -567,7 +556,7 @@ function AppContent() {
     setInspections(inspections.filter((i) => i.venueId !== venueId));
 
     try {
-      const res = await fetch("https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/venues-create", {
+      const res = await fetch(API.venuesCreate, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'delete_venue', venueId }),
@@ -585,7 +574,21 @@ function AppContent() {
 
       const data = await res.json();
       // backend may return { message: 'Deleted' } or proxy { body }
-      console.log('delete_venue response', data);
+      const body = data?.body ? (typeof data.body === 'string' ? JSON.parse(data.body) : data.body) : data;
+      console.log('delete_venue response', data, body);
+
+      // If the backend returned a summary of deletes, display toast messages similar to inspection deletion
+      const summary = data?.summary || body?.summary || null;
+      if (summary) {
+        const inspectionsDeleted = summary.deleted_metadata || summary.inspections_found || summary.deleted_items || 0;
+        const imagesDeleted = summary.deleted_s3_objects || summary.deleted_image_rows || 0;
+        if (inspectionsDeleted > 0) {
+          show(`Deleted ${inspectionsDeleted} inspections for this venue`, { variant: 'success' });
+        }
+        if (imagesDeleted > 0) {
+          show(`Deleted ${imagesDeleted} images for this venue`, { variant: 'success' });
+        }
+      }
 
       // Server-side state already reflected via local update; VenueList will refresh when opened if needed.
       return true;

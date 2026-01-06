@@ -53,7 +53,7 @@ def lambda_handler(event, context):
         if image_id:
             sort_key = f"{room_id}#{item_id}#{image_id}"
             try:
-                table.delete_item(Key={'inspection_id': inspection_id, 'room_id#item_id#image_id': sort_key})
+                table.delete_item(Key={'inspectionId': inspection_id, 'roomId#itemId#imageId': sort_key})
             except Exception as e:
                 print('Error deleting DB item:', e)
                 return build_response(500, {'message': 'Failed to delete DB record', 'error': str(e)})
@@ -61,7 +61,7 @@ def lambda_handler(event, context):
 
         # Otherwise, try to find record(s) by s3Key and delete them
         try:
-            resp = table.query(KeyConditionExpression=Key('inspection_id').eq(inspection_id), FilterExpression=Attr('s3Key').eq(s3_key_param))
+            resp = table.query(KeyConditionExpression=Key('inspectionId').eq(inspection_id), FilterExpression=Attr('s3Key').eq(s3_key_param))
             items = resp.get('Items') or []
             if len(items) == 0:
                 return build_response(404, {'message': 'No matching DB record found for provided s3Key'})
@@ -69,7 +69,7 @@ def lambda_handler(event, context):
             for it in items:
                 sk = it.get('room_id#item_id#image_id')
                 try:
-                    table.delete_item(Key={'inspection_id': inspection_id, 'room_id#item_id#image_id': sk})
+                    table.delete_item(Key={'inspectionId': inspection_id, 'room_id#item_id#image_id': sk})
                     deleted.append(sk)
                 except Exception as e:
                     print('Error deleting DB item:', e)

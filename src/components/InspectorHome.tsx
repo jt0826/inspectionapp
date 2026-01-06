@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { ClipboardCheck, Plus, History, User, Building2, LogOut, Clock, AlertCircle, CheckCircle2, XCircle, MinusCircle, Trash2, Grid } from 'lucide-react';
-import { Inspection } from '../App';
+import type { Inspection } from '../types/inspection';
 import NumberFlow from '@number-flow/react';
 import FadeInText from './FadeInText';
 import InspectionCard from './InspectionCard';
@@ -8,14 +8,15 @@ import { useAuth } from '../contexts/AuthContext';
 import { useToast } from './ToastProvider';
 import FadeIn from 'react-fade-in';
 import LoadingOverlay from './LoadingOverlay';
+import { API } from '../config/api';
 
-type Room = { id?: string; roomId?: string; items?: Record<string, unknown>[]; name?: string };
-type Venue = { id?: string; venueId?: string; name?: string; rooms?: Room[] };
+import type { Venue, Room } from '../types/venue';
+
 type CompletionResult = { complete?: boolean; missing?: unknown[]; total_expected?: number };
 
 interface InspectorHomeProps {
   inspections: Inspection[];
-  venues?: (Record<string, unknown> | Venue)[];
+  venues?: Venue[];
   onCreateNewInspection: () => void;
   onResumeInspection: (inspection: string | Record<string, unknown>) => void;
   onViewHistory: () => void;
@@ -69,7 +70,7 @@ export function InspectorHome({
   const fetchInspections = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch('https://lh3sbophl4.execute-api.ap-southeast-1.amazonaws.com/dev/inspections-query', {
+      const response = await fetch(API.inspectionsQuery, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -189,7 +190,7 @@ export function InspectorHome({
     if (venues && venues.length > 0) {
       const map: Record<string, string> = {};
       venues.forEach((v: Venue) => {
-        const id = v.id || v.venueId;
+        const id = (v as any).id || (v as any).venueId;
         if (id) map[String(id)] = v.name || '';
       });
       setVenuesMap(map);
@@ -240,9 +241,9 @@ export function InspectorHome({
     })
     .map((inspection: Record<string, unknown>) => {
       const vid = (inspection['venue_id'] as string) || (inspection['venueId'] as string) || (inspection['venue'] as string) || '';
-      const venueObj = (venues || []).find((v: Venue) => String(v.id || v.venueId) === vid) || null;
+      const venueObj = (venues || []).find((v: Venue) => String((v as any).id || (v as any).venueId) === vid) || null;
       const venueName = venueObj ? (venueObj.name || '') : (venuesMap[vid] || (inspection['venue_name'] as string) || (inspection['venueName'] as string) || 'Venue not selected');
-      const roomObj = venueObj ? (((venueObj.rooms || []) as Room[]).find((r: Room) => String(r.id || r.roomId) === ((inspection['room_id'] as string) || (inspection['roomId'] as string) || ''))) : null;
+      const roomObj = venueObj ? (((venueObj.rooms || []) as Room[]).find((r: Room) => String((r as any).id || (r as any).roomId) === ((inspection['room_id'] as string) || (inspection['roomId'] as string) || ''))) : null;
       const roomName = roomObj ? (roomObj.name || '') : ((inspection['room_name'] as string) || (inspection['roomName'] as string) || '');
 
       // Prefer server-provided fields when available
@@ -312,9 +313,9 @@ export function InspectorHome({
     })
     .map((inspection: Record<string, unknown>) => {
       const vid = (inspection['venue_id'] as string) || (inspection['venueId'] as string) || (inspection['venue'] as string) || '';
-      const venueObj = (venues || []).find((v: Venue) => String(v.id || v.venueId) === vid) || null;
+      const venueObj = (venues || []).find((v: Venue) => String((v as any).id || (v as any).venueId) === vid) || null;
       const venueName = venueObj ? (venueObj.name || '') : (venuesMap[vid] || (inspection['venue_name'] as string) || (inspection['venueName'] as string) || 'Venue not selected');
-      const roomObj = venueObj ? (((venueObj.rooms || []) as Room[]).find((r: Room) => String(r.id || r.roomId) === ((inspection['room_id'] as string) || (inspection['roomId'] as string) || ''))) : null;
+      const roomObj = venueObj ? (((venueObj.rooms || []) as Room[]).find((r: Room) => String((r as any).id || (r as any).roomId) === ((inspection['room_id'] as string) || (inspection['roomId'] as string) || ''))) : null;
       const roomName = roomObj ? (roomObj.name || '') : ((inspection['room_name'] as string) || (inspection['roomName'] as string) || '');
 
       // Totals: prefer inspection.totals (server-provided) -> inspectionSummaries; no client-side aggregation here

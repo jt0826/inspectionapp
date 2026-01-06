@@ -30,8 +30,13 @@ MAX_HOME_COMPLETED = 6
 
 # Initialize DynamoDB client
 dynamodb = boto3.resource('dynamodb')
-table_name = 'InspectionData'  # Replace with your table name
-table = dynamodb.Table(table_name)
+# Canonical table names (metadata vs items)
+TABLE_INSPECTION_METADATA = 'InspectionMetadata'
+TABLE_INSPECTION_ITEMS = 'InspectionItems'
+TABLE_VENUE_ROOMS = 'VenueRooms'
+
+# Use metadata table for listing
+table = dynamodb.Table(TABLE_INSPECTION_METADATA)
 
 
 def _try_parse_date(val):
@@ -51,38 +56,20 @@ def _try_parse_date(val):
 
 
 def lambda_handler(event, context):
-    try:
-        # Log the incoming event for debugging
-        print('Received event:', json.dumps(event))
+    # DEPRECATED: This duplicate handler (note the filename contains an extra space) is disabled.
+    method = event.get('httpMethod') or event.get('requestContext', {}).get('http', {}).get('method')
+    if method == 'OPTIONS':
+        return {
+            'statusCode': 204,
+            'headers': CORS_HEADERS,
+            'body': ''
+        }
 
-        # Support POST body with action or simple GET request
-        body = {}
-        if event.get('body'):
-            try:
-                body = json.loads(event['body'])
-            except Exception:
-                body = event['body'] or {}
-
-        action = body.get('action') if isinstance(body, dict) else None
-
-        # LIST_INSPECTIONS: return inspection metadata from InspectionData
-        if not action or action == 'list_inspections':
-            # Scan the table with pagination (use strongly-consistent reads so list reflects recent writes)
-            items = []
-            try:
-                resp = table.scan(ConsistentRead=True)
-                items.extend(resp.get('Items', []) or [])
-                while 'LastEvaluatedKey' in resp:
-                    resp = table.scan(ExclusiveStartKey=resp['LastEvaluatedKey'], ConsistentRead=True)
-                    items.extend(resp.get('Items', []) or [])
-            except Exception as e:
-                print('Failed to scan InspectionData:', e)
-                print(traceback.format_exc())
-                return {
-                    'statusCode': 500,
-                    'headers': CORS_HEADERS,
-                    'body': json.dumps({'message': 'Failed to scan InspectionData table', 'error': str(e)})
-                }
+    return {
+        'statusCode': 410,
+        'headers': CORS_HEADERS,
+        'body': json.dumps({'message': 'deprecated', 'detail': 'get _inspections is disabled; use get_inspections instead.'})
+    }
 
             inspections = []
             for it in items:
@@ -116,9 +103,9 @@ def lambda_handler(event, context):
 
             # Enrich each inspection with computed totals (pass/fail/na/pending/total) and updatedAt info
             try:
-                insp_table = dynamodb.Table('Inspection')
+                insp_table = dynamodb.Table(TABLE_INSPECTION_ITEMS)
                 client = boto3.client('dynamodb')
-                desc = client.describe_table(TableName='Inspection')
+                desc = client.describe_table(TableName=TABLE_INSPECTION_ITEMS)
                 key_schema = desc.get('Table', {}).get('KeySchema', [])
                 pk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'HASH'), 'inspection_id')
 
@@ -144,9 +131,28 @@ def lambda_handler(event, context):
                                 continue
                             item_id = it2.get('itemId') or it2.get('item') or it2.get('ItemId')
                             if not item_id:
+                                # Attempt to parse itemId from sort-key-like attributes
+                                for k, v in (it2.items()):
+                                    if isinstance(v, str) and '#' in v:
+                                        parts = v.split('#')
+                                        if len(parts) >= 2:
+                                            item_id = parts[-1]
+                                            break
+                            if not item_id:
                                 continue
                             status = (it2.get('status') or 'pending').lower()
                             rid = it2.get('roomId') or it2.get('room_id') or it2.get('room') or ''
+
+                            # If roomId missing, try to infer it from any attribute that looks like 'roomId#itemId'
+                            if not rid:
+                                for k, v in (it2.items()):
+                                    if isinstance(v, str) and '#' in v:
+                                        parts = v.split('#')
+                                        if len(parts) >= 2:
+                                            rid = parts[0]
+                                            # Log a helpful debug to identify items missing explicit roomId
+                                            print('Inferred roomId from attribute', k, 'for inspection', iid, 'item', item_id, '->', rid)
+                                            break
 
                             totals['total'] += 1
                             if status == 'pass':
@@ -188,25 +194,52 @@ def lambda_handler(event, context):
                         try:
                             venue_id = obj.get('venueId') or obj.get('venue_id') or None
                             if venue_id:
-                                vtable = dynamodb.Table('VenueRoomData')
+                                vtable = dynamodb.Table(TABLE_VENUE_ROOMS)
                                 vresp = vtable.get_item(Key={'venueId': venue_id})
                                 venue = vresp.get('Item') or {}
                                 rooms = venue.get('rooms') or []
                                 expected_total = sum(((r.get('items') or []) and len(r.get('items') or [])) or 0 for r in rooms)
                                 known = (totals.get('pass', 0) or 0) + (totals.get('fail', 0) or 0) + (totals.get('na', 0) or 0)
-                                totals['pending'] = max(0, expected_total - known)
-                                totals['total'] = known + totals['pending']
+                                # If there are no known items saved, pending should equal expected_total (all items pending)
+                                if known == 0:
+                                    totals['pending'] = expected_total
+                                    totals['total'] = expected_total
+                                else:
+                                    totals['pending'] = max(0, expected_total - known)
+                                    totals['total'] = known + totals['pending']
 
-                                # Ensure per-room entries exist and default missing rooms to pending=item count
-                                for r in rooms:
-                                    rid = r.get('roomId') or r.get('id')
-                                    if not rid:
-                                        continue
-                                    if not by_room.get(rid):
-                                        n = len(r.get('items') or [])
-                                        by_room[rid] = {'pass': 0, 'fail': 0, 'na': 0, 'pending': n, 'total': n}
+                                # Ensure per-room breakdown entries exist so clients can render per-room badges
+                                try:
+                                    for r in rooms:
+                                        rid = r.get('roomId') or r.get('id')
+                                        if not rid:
+                                            continue
+                                        expected_n = len(r.get('items') or [])
+                                        existing = by_room.get(rid)
+                                        if not existing:
+                                            # no known items for this room -> all pending
+                                            by_room[rid] = {'pass': 0, 'fail': 0, 'na': 0, 'pending': expected_n, 'total': expected_n}
+                                        else:
+                                            # fill pending for partially-known rooms
+                                            known_room = (existing.get('pass',0) or 0) + (existing.get('fail',0) or 0) + (existing.get('na',0) or 0)
+                                            if expected_n > known_room:
+                                                existing['pending'] = expected_n - known_room
+                                                existing['total'] = known_room + existing['pending']
+                                except Exception as e2:
+                                    print('Failed to fill per-room defaults for inspection', obj.get('inspection_id'), e2)
                         except Exception as e:
                             print('Failed to enrich totals with venue data for inspection', obj.get('inspection_id'), e)
+
+                        # Debug: log computed by_room keys and sample items to diagnose missing per-room breakdown
+                        try:
+                            if not by_room:
+                                # If no by_room, print a small sample of raw item records so we can spot missing room ids
+                                sample = items2[:5] if isinstance(items2, list) else items2
+                                print('No byRoom computed for inspection', iid, 'totals=', totals, 'items_sample=', sample)
+                            else:
+                                print('Computed byRoom for inspection', iid, 'byRoom_keys=', list(by_room.keys()), 'byRoom=', by_room)
+                        except Exception as e:
+                            print('Error logging by_room debug info for inspection', iid, e)
 
                         obj['totals'] = totals
                         obj['byRoom'] = by_room
@@ -218,14 +251,28 @@ def lambda_handler(event, context):
                 print('Failed to enrich inspections with summaries:', e)
 
             # Partition inspections by status into ongoing and completed (status field determines grouping)
-            completed = []
-            ongoing = []
+            # Build id map to ensure partitioned lists reference the enriched inspection objects (and include byRoom)
+            id_map = { (obj.get('inspection_id') or obj.get('id') or ''): obj for obj in inspections }
+            completed_ids = []
+            ongoing_ids = []
             for obj in inspections:
                 st = (obj.get('status') or '').lower() if obj.get('status') else ''
+                iid = obj.get('inspection_id') or obj.get('id') or ''
                 if st == 'completed':
-                    completed.append(obj)
+                    completed_ids.append(iid)
                 else:
-                    ongoing.append(obj)
+                    ongoing_ids.append(iid)
+
+            completed = [id_map.get(i) for i in completed_ids if id_map.get(i)]
+            ongoing = [id_map.get(i) for i in ongoing_ids if id_map.get(i)]
+
+            # Debug: log presence of byRoom across partitions
+            try:
+                comp_missing = [i for i in completed if i and not (i.get('byRoom') and len(i.get('byRoom'))>0)]
+                ong_missing = [i for i in ongoing if i and not (i.get('byRoom') and len(i.get('byRoom'))>0)]
+                print('Partitioned counts: inspections=', len(inspections), 'completed=', len(completed), 'ongoing=', len(ongoing), 'completed_missing_byroom=', len(comp_missing), 'ongoing_missing_byroom=', len(ong_missing))
+            except Exception as e:
+                print('Failed to log partitioned byRoom debug info', e)
 
             # Sort completed by most-recent completion/updated/created timestamp and limit result to MAX_HOME_COMPLETED to reduce payload
             def _get_sort_ts(o):
@@ -281,9 +328,9 @@ def lambda_handler(event, context):
                 }
 
             try:
-                insp_table = dynamodb.Table('Inspection')
+                insp_table = dynamodb.Table(TABLE_INSPECTION_ITEMS)
                 client = boto3.client('dynamodb')
-                desc = client.describe_table(TableName='Inspection')
+                desc = client.describe_table(TableName=TABLE_INSPECTION_ITEMS)
                 key_schema = desc.get('Table', {}).get('KeySchema', [])
                 pk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'HASH'), 'inspection_id')
 
@@ -325,9 +372,9 @@ def lambda_handler(event, context):
                 }
 
             try:
-                insp_table = dynamodb.Table('Inspection')
+                insp_table = dynamodb.Table(TABLE_INSPECTION_ITEMS)
                 client = boto3.client('dynamodb')
-                desc = client.describe_table(TableName='Inspection')
+                desc = client.describe_table(TableName=TABLE_INSPECTION_ITEMS)
                 key_schema = desc.get('Table', {}).get('KeySchema', [])
                 pk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'HASH'), 'inspection_id')
 
@@ -387,6 +434,35 @@ def lambda_handler(event, context):
                                     latest_ts = ts
                                     latest_by = it.get('inspectorName') or it.get('createdBy') or it.get('inspector_name') or it.get('created_by') or None
 
+                # If by_room is empty, try to enrich per-room defaults from the venue linked to this inspection (fallback)
+                try:
+                    if not by_room:
+                        meta_table = dynamodb.Table(TABLE_INSPECTION_METADATA)
+                        try:
+                            meta_resp = meta_table.get_item(Key={'inspection_id': inspection_id})
+                            meta = meta_resp.get('Item') or {}
+                            meta_venue_id = meta.get('venueId') or meta.get('venue_id') or None
+                        except Exception:
+                            meta_venue_id = None
+
+                        if meta_venue_id:
+                            vtable = dynamodb.Table(TABLE_VENUE_ROOMS)
+                            try:
+                                vresp = vtable.get_item(Key={'venueId': meta_venue_id})
+                                venue = vresp.get('Item') or {}
+                                rooms = venue.get('rooms') or []
+                                for r in rooms:
+                                    rid = r.get('roomId') or r.get('id')
+                                    if not rid:
+                                        continue
+                                    n = len(r.get('items') or [])
+                                    # make default per-room: all pending
+                                    by_room[rid] = {'pass': 0, 'fail': 0, 'na': 0, 'pending': n, 'total': n}
+                            except Exception as e:
+                                print('Failed to enrich byRoom from venue for inspection', inspection_id, e)
+                except Exception as e:
+                    print('Failed to attempt byRoom enrichment for inspection', inspection_id, e)
+
                 return {
                     'statusCode': 200,
                     'headers': CORS_HEADERS,
@@ -413,7 +489,7 @@ def lambda_handler(event, context):
                 }
             try:
                 # load venue rooms/items
-                vtable = dynamodb.Table('VenueRoomData')
+                vtable = dynamodb.Table(TABLE_VENUE_ROOMS)
                 vresp = vtable.get_item(Key={'venueId': venue_id})
                 venue = vresp.get('Item') or {}
                 rooms = venue.get('rooms') or []
@@ -433,9 +509,9 @@ def lambda_handler(event, context):
                         'body': json.dumps({'complete': False, 'reason': 'no expected items found', 'total_expected': 0})
                     }
 
-                insp_table = dynamodb.Table('Inspection')
+                insp_table = dynamodb.Table(TABLE_INSPECTION_ITEMS)
                 client = boto3.client('dynamodb')
-                desc = client.describe_table(TableName='Inspection')
+                desc = client.describe_table(TableName=TABLE_INSPECTION_ITEMS)
                 key_schema = desc.get('Table', {}).get('KeySchema', [])
                 pk_attr = next((k['AttributeName'] for k in key_schema if k['KeyType'] == 'HASH'), 'inspection_id')
 

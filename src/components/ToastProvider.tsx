@@ -28,10 +28,10 @@ export const useToast = () => {
 };
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
-  const [visible, setVisible] = useState(false);
-  const [message, setMessage] = useState('');
-  const [variant, setVariant] = useState<ToastVariant>('success');
-  const [timeoutId, setTimeoutId] = useState<number | null>(null);
+  // Multiple stacked toasts support
+  const [toasts, setToasts] = useState<Array<{ id: number; message: string; variant: ToastVariant; duration: number }>>([]);
+  const toastIdRef = useRef(0);
+  const timersRef = useRef<Map<number, number>>(new Map());
 
   // Confirm modal state
   const [confirmVisible, setConfirmVisible] = useState(false);
@@ -41,20 +41,28 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [confirmCancelLabel, setConfirmCancelLabel] = useState<string>('Cancel');
   const confirmResolveRef = useRef<(v: boolean) => void | null>(null);
 
-  const show = useCallback((msg: string, options?: ToastOptions) => {
-    setMessage(msg);
-    setVariant(options?.variant || 'success');
-    setVisible(true);
-    if (timeoutId) {
-      window.clearTimeout(timeoutId);
-      setTimeoutId(null);
+  const removeToast = useCallback((id: number) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+    const tid = timersRef.current.get(id);
+    if (tid) {
+      window.clearTimeout(tid);
+      timersRef.current.delete(id);
     }
-    const id = window.setTimeout(() => {
-      setVisible(false);
-      setTimeoutId(null);
-    }, options?.duration ?? 3500);
-    setTimeoutId(id);
-  }, [timeoutId]);
+  }, []);
+
+  const show = useCallback((msg: string, options?: ToastOptions) => {
+    const id = ++toastIdRef.current;
+    const duration = options?.duration ?? 3500;
+    const variant = options?.variant || 'success';
+    setToasts((prev) => [...prev, { id, message: msg, variant, duration }]);
+
+    const tid = window.setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+      timersRef.current.delete(id);
+    }, duration);
+    timersRef.current.set(id, tid);
+    return id;
+  }, []);
 
   const confirm = useCallback((opts: ConfirmOptions) => {
     setConfirmTitle(opts.title || 'Confirm');
@@ -77,30 +85,35 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     return () => {
-      if (timeoutId) window.clearTimeout(timeoutId);
+      // Clear all timers on unmount
+      timersRef.current.forEach((tid) => window.clearTimeout(tid));
+      timersRef.current.clear();
     };
-  }, [timeoutId]);
+  }, []);
 
   return (
     <ToastContext.Provider value={{ show, confirm }}>
       {children}
 
-      {/* Toast UI (global) */}
-      { (variant === 'success' || variant === 'error') ? (
-        /* Top-center, slightly larger dark toasts for success/error with fade/scale animation */
-        <div className={`fixed left-0 right-0 top-6 z-50 flex justify-center pointer-events-none`} role="status" aria-live="polite">
-          <div className={`pointer-events-auto transform transition duration-200 ease-out ${visible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-2 scale-95'} flex items-center gap-3 px-6 py-3 rounded-lg shadow-xl`} style={{ backgroundColor: variant === 'success' ? 'rgba(16,163,74,0.65)' : 'rgba(220,38,38,0.65)' }}>
-            <div className="text-white font-semibold text-lg">{message}</div>
+      {/* Success/Error toasts - stacked centered */}
+      <div className="fixed left-0 right-0 top-6 z-50 flex flex-col items-center gap-3 pointer-events-none" role="status" aria-live="polite">
+        {toasts.filter(t => t.variant === 'success' || t.variant === 'error').map((t) => (
+          <div key={t.id} className={`pointer-events-auto transform transition duration-200 ease-out ${t ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-2 scale-95'} flex items-center gap-3 px-6 py-3 rounded-lg shadow-xl`} style={{ backgroundColor: t.variant === 'success' ? 'rgba(16,163,74,0.65)' : 'rgba(220,38,38,0.65)' }}>
+            <div className="text-white font-semibold text-lg">{t.message}</div>
+            <button onClick={() => removeToast(t.id)} className="text-white opacity-80 ml-3">✕</button>
           </div>
-        </div>
-      ) : (
-        /* Smaller, top-right toast for info or neutral messages (also animated) */
-        <div className={`fixed top-6 right-6 z-50 pointer-events-none`} role="status" aria-live="polite">
-          <div className={`pointer-events-auto transform transition duration-200 ease-out ${visible ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-2 scale-95'} flex items-center gap-2 px-4 py-2 rounded shadow-lg`} style={{ backgroundColor: 'rgba(75,85,99,0.65)' }}>
-            <div className="text-white font-medium">{message}</div>
+        ))}
+      </div>
+
+      {/* Info toasts - stacked top-right */}
+      <div className="fixed top-6 right-6 z-50 flex flex-col items-end gap-2 pointer-events-none" role="status" aria-live="polite">
+        {toasts.filter(t => t.variant === 'info').map((t) => (
+          <div key={t.id} className={`pointer-events-auto transform transition duration-200 ease-out ${t ? 'opacity-100 translate-y-0 scale-100' : 'opacity-0 -translate-y-2 scale-95'} flex items-center gap-2 px-4 py-2 rounded shadow-lg`} style={{ backgroundColor: 'rgba(75,85,99,0.65)' }}>
+            <div className="text-white font-medium">{t.message}</div>
+            <button onClick={() => removeToast(t.id)} className="text-white opacity-80 ml-3">✕</button>
           </div>
-        </div>
-      ) }
+        ))}
+      </div>
 
       {/* Global confirm modal */}
       {confirmVisible && (
