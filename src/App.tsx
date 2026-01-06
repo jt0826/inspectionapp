@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { AuthProvider, useAuth, useDisplayName } from './contexts/AuthContext';
 import { ToastProvider } from './components/ToastProvider';
 import { Login } from './components/Login';
 import { VenueList } from './components/VenueList';
@@ -84,6 +84,7 @@ type View =
 
 function AppContent() {
   const { isAuthenticated, user } = useAuth();
+  const displayName = useDisplayName();
   const [currentView, setCurrentView] = useState<View>('home');
   const [inspectionReadOnly, setInspectionReadOnly] = useState<boolean>(false);
   // Replace hard-coded venues with data from backend
@@ -141,31 +142,8 @@ function AppContent() {
           : insp
       ));
 
-      // Persist venue selection to the inspections service for the current draft (include updated metadata)
-      (async () => {
-        try {
-          const resp = await fetch(API.inspections, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'save_inspection',
-              inspection: {
-                inspection_id: currentInspectionId,
-                venueId: venue.id,
-                venueName: venue.name,
-                venue_name: venue.name,
-                updatedBy: user?.name || 'Unknown'
-              }
-            }),
-          });
-          if (resp && resp.ok) {
-            try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('inspectionSaved', { detail: { inspectionId: currentInspectionId } })); } catch (e) { /* ignore */ }
-          }
-        } catch (e) {
-          console.warn('Failed to persist venue selection for inspection:', e);
-        }
-      })();
-
+      // Do NOT persist venue/room selections automatically. Saving should only occur when the user
+      // explicitly presses the "Save" button in the Inspection form (server-authoritative saves).
       setCurrentView('confirmInspection');
     } else {
       // Old behavior for venue management
@@ -175,42 +153,33 @@ function AppContent() {
 
   const handleRoomSelect = (room: Room) => {
     setSelectedRoom(room);
-    
+
     // If we have a current inspection, update it with room info
     if (currentInspectionId) {
+      // Find the existing inspection record using any common id key we might have
+      const existing = inspections.find(i => (i as any).id === currentInspectionId || (i as any).inspection_id === currentInspectionId || (i as any).inspectionId === currentInspectionId);
+      const existingRoomId = existing?.roomId || (existing as any)?.room_id || (existing as any)?.room || null;
+
+      // If the current inspection already references this room, nothing to persist
+      if (existing && String(existingRoomId || '') === String(room.id)) {
+        // Ensure we preserve read-only state
+        setInspectionReadOnly(Boolean(existing && String((existing as any).status || '').toLowerCase() === 'completed'));
+        return;
+      }
+
+      // Update local state optimistically only when the room actually changes
       setInspections(inspections.map(insp => 
-        insp.id === currentInspectionId 
+        ((insp as any).id === currentInspectionId || (insp as any).inspection_id === currentInspectionId || (insp as any).inspectionId === currentInspectionId)
           ? { ...insp, roomId: room.id, roomName: room.name }
           : insp
       ));
 
-      // Persist room selection to the inspections service so the draft is fully associated (include updated metadata)
-      (async () => {
-        try {
-          const resp = await fetch(API.inspections, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'save_inspection',
-              inspection: {
-                inspection_id: currentInspectionId,
-                roomId: room.id,
-                roomName: room.name,
-                updatedBy: user?.name || 'Unknown'
-              }
-            }),
-          });
-          if (resp && resp.ok) {
-            try { if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('inspectionSaved', { detail: { inspectionId: currentInspectionId } })); } catch (e) { /* ignore */ }
-          }
-        } catch (e) {
-          console.warn('Failed to persist room selection for inspection:', e);
-        }
-      })();
+      // Do NOT persist venue/room selections automatically. Saving should only occur when the user
+      // explicitly presses the "Save" button in the Inspection form (server-authoritative saves).
 
       // Ensure we set read-only based on the inspection's latest known status (prevent losing read-only when navigating between views)
       try {
-        const insp = inspections.find(i => i.id === currentInspectionId);
+        const insp = inspections.find(i => i.id === currentInspectionId) || existing;
         setInspectionReadOnly(Boolean(insp && String(insp.status || '').toLowerCase() === 'completed'));
       } catch (e) {
         // If anything goes wrong, default to not read-only
@@ -285,7 +254,7 @@ function AppContent() {
       roomId: inspectionData.roomId || inspectionData.room_id || '',
       roomName: inspectionData.roomName || inspectionData.room_name || '',
       createdAt: inspectionData.createdAt || inspectionData.timestamp || '',
-      inspectorName: inspectionData.createdBy || inspectionData.inspectorName || user?.name || 'Unknown',
+      createdBy: inspectionData.createdBy || displayName,
       items: [],
       status: (inspectionData.status as any) || 'in-progress',
     };
@@ -605,7 +574,7 @@ function AppContent() {
       // Creation flow: append venue and navigate back to venues list
       const newVenue = {
         ...venue,
-        createdBy: user?.name || 'Unknown',
+        createdBy: displayName,
       };
       setVenues([...venues, newVenue]);
 

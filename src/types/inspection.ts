@@ -7,10 +7,11 @@ export interface Inspection {
   venueName: string;
   roomId: string;
   roomName: string;
-  inspectorName: string;
   status: 'draft' | 'in-progress' | 'completed';
   createdAt?: string;
+  createdBy?: string;
   updatedAt?: string;
+  updatedBy?: string;
   completedAt?: string;
   items: InspectionItem[];
   totals?: InspectionTotals;

@@ -62,7 +62,7 @@ export const InspectionCard = ({ inspection, variant = 'ongoing', onClick, onDel
               <Clock className="w-4 h-4 flex-shrink-0" />
               <span>Created: {formatDate(inspection.timestamp)}</span>
             </div>
-            <div className={`text-xs lg:text-sm ${subtitleClass} block`}>Created by: <span className="font-medium">{inspection.inspectorName || (inspection as any).createdBy || pick(inspection.raw as any, 'createdBy', 'created_by', 'inspectorName') || <span className="text-gray-400">—</span>}</span></div>
+            <div className={`text-xs lg:text-sm ${subtitleClass} block`}>Created by: <span className="font-medium">{(inspection as any).createdBy || pick(inspection.raw as any, 'createdBy', 'created_by') || <span className="text-gray-400">—</span>}</span></div>
 
             <div className={`flex items-center gap-2 text-xs lg:text-sm ${metaClass}`}>
               <Clock className="w-4 h-4 flex-shrink-0" />

@@ -94,6 +94,15 @@ export function InspectorHome({
           // Detect consolidated payload with server-provided partitioning (completed/ongoing)
           if (parsed.completed || parsed.ongoing) {
             setServerProvidedSummaries(true);
+
+            // If server returns partitioned arrays but not a combined 'inspections' list, use
+            // ongoing + completed as the effective inspections list for UI rendering.
+            try {
+              inspectionsArray = (parsed.ongoing || []).concat(parsed.completed || []);
+            } catch (e) {
+              inspectionsArray = inspectionsArray || [];
+            }
+
             // Build completed map from server-provided completed list
             try {
               const compArr = parsed.completed || [];
@@ -138,6 +147,14 @@ export function InspectorHome({
       if (!serverProvidedSummaries && (Array.isArray((data as any)?.completed) || Array.isArray((data as any)?.ongoing))) {
         try {
           setServerProvidedSummaries(true);
+
+          // Use the server-provided ongoing + completed as the effective inspections list for the UI
+          try {
+            inspectionsArray = ((data as any).ongoing || []).concat((data as any).completed || []);
+          } catch (e) {
+            inspectionsArray = inspectionsArray || [];
+          }
+
           const compArr = (data as any).completed || [];
           const map: Record<string, boolean> = {};
           (compArr || []).forEach((c: any) => { const id = String(c?.inspection_id || c?.id || ''); if (id) map[id] = true; });
@@ -248,7 +265,7 @@ export function InspectorHome({
 
       // Prefer server-provided fields when available
       const createdAt = pick(inspection, 'createdAt', 'created_at', 'timestamp');
-      const createdBy = pick(inspection, 'createdBy', 'created_by', 'inspectorName');
+      const createdBy = pick(inspection, 'createdBy', 'created_by');
       const updatedAt = pick(inspection, 'updatedAt', 'updated_at') || pick((inspection as any).raw as any, 'updatedAt', 'updated_at') || undefined;
       const updatedBy = pick(inspection, 'updatedBy', 'updated_by') || pick((inspection as any).raw as any, 'updatedBy', 'updated_by') || undefined;
 
@@ -265,7 +282,6 @@ export function InspectorHome({
         roomId: String((inspection['room_id'] as string) || ''),
         status: String((inspection['status'] as string) || 'draft'),
         items: (inspection['items'] as unknown[]) || [],
-        inspectorName: pick(inspection, 'inspectorName', 'createdBy', 'created_by'),
         createdBy: createdBy,
         raw: inspection,
         updatedAt,

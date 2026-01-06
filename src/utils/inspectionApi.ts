@@ -205,7 +205,15 @@ export async function getInspections() {
 
     const data = await res.json();
     const body = data?.body ? (typeof data.body === 'string' ? JSON.parse(data.body) : data.body) : data;
-    const items: any[] = Array.isArray(body?.inspections) ? body.inspections : [];
+
+    // Support both legacy { inspections: [...] } and partitioned { ongoing: [...], completed: [...] }
+    let items: any[] = [];
+    if (Array.isArray(body?.inspections)) {
+      items = body.inspections;
+    } else if (Array.isArray(body?.ongoing) || Array.isArray(body?.completed)) {
+      items = ((body.ongoing || []) as any[]).concat((body.completed || []) as any[]);
+    }
+
     try {
       const { parseInspectionsArray } = await import('../schemas/inspection');
       const parsed = parseInspectionsArray(items);

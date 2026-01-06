@@ -48,7 +48,7 @@ handler._now_local_iso = lambda: '2026-01-07T12:00:00+08:00'
 
 
 def test_save_inspection_updates_updatedAt():
-    payload = {'inspection': {'inspection_id': 'inspection_test', 'inspectorName': 'Tester', 'venueId': 'venue_x', 'items': [{'itemId': 'i1', 'status': 'pass'}, {'itemId': 'i2', 'status': 'pass'}]}}
+    payload = {'inspection': {'inspection_id': 'inspection_test', 'createdBy': 'Tester', 'venueId': 'venue_x', 'items': [{'itemId': 'i1', 'status': 'pass'}, {'itemId': 'i2', 'status': 'pass'}]}}
     logs = []
     def dbg(m): logs.append(str(m))
 

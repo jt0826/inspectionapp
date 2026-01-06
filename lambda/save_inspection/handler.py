@@ -20,7 +20,8 @@ def handle_save_inspection(event_body: dict, debug):
             # Merge existing meta
             k, existing_data = read_inspection_metadata(inspection_id)
             existing_data = existing_data or {}
-            created_by = ins.get('createdBy') or ins.get('inspectorName') or ins.get('updatedBy')
+            # Prefer createdBy/updatedBy and do not persist deprecated 'inspectorName' or snake_case 'venue_name'
+            created_by = ins.get('createdBy') or ins.get('updatedBy') or 'Unknown'
             venue_id_val = ins.get('venueId') or ins.get('venue_id') or (ins.get('venue') or {}).get('id')
             venue_name_val = ins.get('venueName') or ins.get('venue_name') or (ins.get('venue') or {}).get('name')
             insp_data_item = {
@@ -30,10 +31,8 @@ def handle_save_inspection(event_body: dict, debug):
                 'updatedAt': now,
                 'createdBy': existing_data.get('createdBy') or created_by,
                 'updatedBy': ins.get('updatedBy') or existing_data.get('createdBy') or created_by,
-                'inspectorName': existing_data.get('inspectorName') or created_by,
                 'venueId': existing_data.get('venueId') if existing_data.get('venueId') is not None else venue_id_val,
                 'venueName': existing_data.get('venueName') if existing_data.get('venueName') is not None else venue_name_val,
-                'venue_name': existing_data.get('venue_name') if existing_data.get('venue_name') is not None else venue_name_val,
                 'status': ins.get('status') or (existing_data.get('status') if existing_data else 'in-progress'),
             }
             from boto3 import resource
@@ -76,7 +75,6 @@ def handle_save_inspection(event_body: dict, debug):
         # build update expression
         expr_vals = {
             ':updatedAt': action_ts,
-            ':inspectorName': ins.get('inspectorName'),
             ':roomId': room_id,
             ':roomName': ins.get('roomName') or (ins.get('item') or {}).get('roomName'),
             ':itemId': item_id,
@@ -90,7 +88,6 @@ def handle_save_inspection(event_body: dict, debug):
             'createdAt = if_not_exists(createdAt, :createdAt)',
             '#s = :status',
             'comments = :comments',
-            'inspectorName = :inspectorName',
             'roomId = :roomId',
             'roomName = :roomName',
             'itemId = :itemId',
@@ -145,7 +142,7 @@ def handle_save_inspection(event_body: dict, debug):
 
     # After saving items, update inspection-level metadata (updatedAt/updatedBy) before checking completeness
     try:
-        meta_update_vals = {':u': action_ts, ':ub': ins.get('inspectorName') or ins.get('createdBy')}
+        meta_update_vals = {':u': action_ts, ':ub': ins.get('updatedBy') or ins.get('createdBy')}
         if ins.get('venueId') is not None:
             meta_update_vals[':v'] = ins.get('venueId')
         if ins.get('venueName') is not None:
@@ -172,7 +169,7 @@ def handle_save_inspection(event_body: dict, debug):
     debug(f"save_inspection: completeness result for inspection={inspection_id}: {completeness}")
     if completeness and completeness.get('complete') == True:
         try:
-            updated = update_inspection_metadata(inspection_id, 'SET #s = :s, updatedAt = :u, completedAt = :c, updatedBy = :ub', {':s': 'completed', ':u': now, ':c': now, ':ub': ins.get('inspectorName') or ins.get('createdBy')}, debug=debug)
+            updated = update_inspection_metadata(inspection_id, 'SET #s = :s, updatedAt = :u, completedAt = :c, updatedBy = :ub', {':s': 'completed', ':u': now, ':c': now, ':ub': ins.get('updatedBy') or ins.get('createdBy')}, debug=debug)
             debug(f"save_inspection: update_inspection_metadata returned: {updated} for inspection={inspection_id}")
             k, meta_after_update = read_inspection_metadata(inspection_id)
             debug(f"save_inspection: metadata after completion update for inspection={inspection_id}: key={k}, meta={meta_after_update}")

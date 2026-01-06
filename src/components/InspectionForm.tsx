@@ -3,7 +3,7 @@ import { ArrowLeft, CheckCircle2, XCircle, MinusCircle, Save, Camera, X, Search,
 import NumberFlow from '@number-flow/react';
 import type { Venue, Room } from '../types/venue';
 import type { Inspection, InspectionItem } from '../types/inspection';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth, useDisplayName } from '../contexts/AuthContext';
 import { getInspectionItems, getInspections } from '../utils/inspectionApi';
 import { API } from '../config/api';
 import { generatePhotoId, generateItemId, generateInspectionId } from '../utils/id';
@@ -76,6 +76,7 @@ const enforceRoomOrder = (items: InspectionItem[], room: Room) => {
 
 export function InspectionForm({ venue, room, onBack, onSubmit, existingInspection, inspectionId, readOnly = false }: InspectionFormProps) {
   const { user } = useAuth();
+  const displayName = useDisplayName();
 
   // Server-driven read-only state (for inspectionId-only flows)
   const [serverReadOnly, setServerReadOnly] = useState<boolean>(false);
@@ -432,7 +433,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
       venueName: venue.name,
       roomId: room.id,
       roomName: room.name,
-      inspectorName: user?.name || 'Unknown',
+      updatedBy: displayName,
       items: inspectionItems,
       status: 'in-progress' as any,
     };
@@ -448,7 +449,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
           venueName: inspectionToSubmit.venueName,
           roomId: inspectionToSubmit.roomId,
           roomName: inspectionToSubmit.roomName,
-          inspectorName: inspectionToSubmit.inspectorName,
+          updatedBy: inspectionToSubmit.updatedBy,
           items: inspectionToSubmit.items.map((it: any) => ({ itemId: it.id, status: it.status, notes: it.notes, itemName: it.name, order: it.order, images: (it.photos || []).filter((p: any) => p.imageId).map((p: any) => ({ imageId: p.imageId, s3Key: p.s3Key, filename: p.filename })) }))
         }
       };

@@ -93,14 +93,14 @@ def lambda_handler(event, context):
             for it in items:
                 created = _try_parse_date(it.get('createdAt') or it.get('created_at') or None)
                 updated = _try_parse_date(it.get('updatedAt') or it.get('updated_at') or None)
-                inspector = it.get('inspectorName') or it.get('createdBy') or it.get('created_by') or None
+                # Prefer metadata updatedBy or createdBy as the canonical author; do not propagate deprecated inspectorName
+                author = it.get('updatedBy') or it.get('createdBy') or it.get('created_by') or None
 
                 obj = {
                     'inspection_id': it.get('inspection_id') or it.get('inspectionId') or it.get('id'),
                     'createdAt': created,
                     'venueId': it.get('venueId') or it.get('venue_id') or None,
                     'venueName': it.get('venueName') or it.get('venue_name') or None,
-                    'venue_name': it.get('venue_name') or it.get('venueName') or None,
                     'roomId': it.get('roomId') or it.get('room_id') or None,
                     'roomName': it.get('roomName') or it.get('room_name') or None,
                     'completedAt': _try_parse_date(it.get('completedAt') or it.get('completed_at') or None),
@@ -108,14 +108,14 @@ def lambda_handler(event, context):
                     'raw': it
                 }
 
-                # include creator and inspector display names if present on the item
-                obj['createdBy'] = it.get('createdBy') or it.get('created_by') or it.get('inspectorName') or None
-                obj['inspectorName'] = it.get('inspectorName') or it.get('createdBy') or it.get('created_by') or None
+                # include creator display name (canonical) and keep inspectorName only as a compatibility fallback
+                obj['createdBy'] = it.get('createdBy') or it.get('created_by') or None
+                obj['inspectorName'] = it.get('inspectorName') or obj['createdBy'] or None
 
+                # set metadata-updated fields from the metadata row if present
                 if updated:
                     obj['updatedAt'] = updated
-                # prefer explicit updatedBy field if present, otherwise fall back to inspectorName
-                obj['updatedBy'] = it.get('updatedBy') or inspector or None
+                obj['updatedBy'] = it.get('updatedBy') or None
 
                 inspections.append(obj)
 
@@ -201,12 +201,13 @@ def lambda_handler(event, context):
                                     ts = dt.isoformat()
                                     if not latest_ts:
                                         latest_ts = ts
-                                        latest_by = it2.get('inspectorName') or it2.get('createdBy') or it2.get('inspector_name') or it2.get('created_by') or None
+                                        # Prefer explicit updatedBy, then createdBy; inspectorName is deprecated and not used
+                                        latest_by = it2.get('updatedBy') or it2.get('createdBy') or it2.get('updated_by') or it2.get('created_by') or None
                                     else:
                                         ldt = _parse_iso_to_aware(latest_ts)
                                         if ldt is None or dt > ldt:
                                             latest_ts = ts
-                                            latest_by = it2.get('inspectorName') or it2.get('createdBy') or it2.get('inspector_name') or it2.get('created_by') or None
+                                            latest_by = it2.get('updatedBy') or it2.get('createdBy') or it2.get('updated_by') or it2.get('created_by') or None
 
                         # Enrich totals with expected venue item counts and ensure per-room defaults (match RoomList.tsx behavior)
                         try:
@@ -261,8 +262,19 @@ def lambda_handler(event, context):
 
                         obj['totals'] = totals
                         obj['byRoom'] = by_room
-                        obj['updatedAt'] = latest_ts
-                        obj['updatedBy'] = latest_by
+                        # Only override metadata-updatedAt/updatedBy with item-derived values if we actually found a latest_ts
+                        try:
+                            if latest_ts:
+                                meta_dt = _parse_iso_to_aware(obj.get('updatedAt'))
+                                latest_dt = _parse_iso_to_aware(latest_ts)
+                                if meta_dt is None or (latest_dt and latest_dt > meta_dt):
+                                    obj['updatedAt'] = latest_ts
+                                    obj['updatedBy'] = latest_by or obj.get('updatedBy')
+                        except Exception:
+                            # Fallback to item-derived values on any parsing error
+                            if latest_ts:
+                                obj['updatedAt'] = latest_ts
+                                obj['updatedBy'] = latest_by or obj.get('updatedBy')
                     except Exception as e:
                         print('Failed to compute summary for inspection', obj.get('inspection_id'), e)
             except Exception as e:
@@ -329,10 +341,12 @@ def lambda_handler(event, context):
                 # fallback: return full list (best-effort)
                 completed_limited = completed
 
+            # Only return partitioned arrays (completed and ongoing). The top-level 'inspections' array
+            # previously duplicated this data and caused clients to parse entries twice.
             return {
                 'statusCode': 200,
                 'headers': CORS_HEADERS,
-                'body': json.dumps({'inspections': inspections, 'completed': completed_limited, 'ongoing': ongoing})
+                'body': json.dumps({'completed': completed_limited, 'ongoing': ongoing})
             }
 
         # GET_INSPECTION: return raw items for a given inspection id

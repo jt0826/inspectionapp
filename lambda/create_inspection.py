@@ -125,12 +125,13 @@ def lambda_handler(event, context):
 
             try:
                 now = _now_local_iso()
-                created_by = ins.get('createdBy') or ins.get('inspectorName') or ins.get('updatedBy') or 'Unknown'
+                # Prefer explicit createdBy, fallback to updatedBy or 'Unknown' (do not use inspectorName)
+                created_by = ins.get('createdBy') or ins.get('updatedBy') or 'Unknown'
                 venue_id_val = ins.get('venueId') or ins.get('venue_id') or (ins.get('venue') or {}).get('id')
                 venue_name_val = ins.get('venueName') or ins.get('venue_name') or (ins.get('venue') or {}).get('name')
 
-                # Build meta item for Inspection table
-                meta_item = {pk_attr: inspection_id, 'createdAt': now, 'updatedAt': now, 'createdBy': created_by, 'updatedBy': ins.get('updatedBy') or created_by, 'inspectorName': ins.get('inspectorName') or created_by, 'venueId': venue_id_val, 'venueName': venue_name_val, 'venue_name': venue_name_val, 'status': ins.get('status') or 'in-progress', 'completedAt': ins.get('completedAt') or None}
+                # Build meta item for Inspection table (do not include deprecated 'inspectorName' or duplicate 'venue_name')
+                meta_item = {pk_attr: inspection_id, 'createdAt': now, 'updatedAt': now, 'createdBy': created_by, 'updatedBy': ins.get('updatedBy') or created_by, 'venueId': venue_id_val, 'venueName': venue_name_val, 'status': ins.get('status') or 'in-progress', 'completedAt': ins.get('completedAt') or None}
                 if sk_attr:
                     meta_item[sk_attr] = '__meta__'
 
@@ -139,7 +140,7 @@ def lambda_handler(event, context):
                 insp_data_row = None
                 try:
                     insp_data_table = dynamodb.Table(INSPECTION_DATA_TABLE)
-                    # Write the canonical metadata row (both snake_case and camelCase keys where useful)
+                    # Write the canonical metadata row (use camelCase primary fields only)
                     insp_data_table.put_item(Item={
                         'inspection_id': inspection_id,
                         'inspectionId': inspection_id,
@@ -147,10 +148,8 @@ def lambda_handler(event, context):
                         'updatedAt': now,
                         'createdBy': meta_item.get('createdBy'),
                         'updatedBy': meta_item.get('updatedBy'),
-                        'inspectorName': meta_item.get('inspectorName'),
                         'venueId': meta_item.get('venueId'),
                         'venueName': meta_item.get('venueName'),
-                        'venue_name': meta_item.get('venue_name'),
                         'status': meta_item.get('status') or 'in-progress',
                         'completedAt': meta_item.get('completedAt')
                     })

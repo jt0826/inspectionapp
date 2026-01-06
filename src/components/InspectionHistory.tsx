@@ -3,6 +3,7 @@ import { ArrowLeft, History, Building2, Calendar, CheckCircle2, XCircle, AlertCi
 import NumberFlow from '@number-flow/react';
 import FadeInText from './FadeInText';
 import FadeIn from 'react-fade-in';
+import LoadingOverlay from './LoadingOverlay';
 import type {Inspection} from '../types/inspection';
 import { getInspectionsPartitioned } from '../utils/inspectionApi';
 import InspectionCard from './InspectionCard';
@@ -38,10 +39,12 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection, onR
 
   // Use server-provided inspections from the consolidated query endpoint
   const [sourceInspections, setSourceInspections] = useState<any[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
 
   useEffect(() => {
     let cancelled = false;
     const fetchList = async () => {
+      setLoading(true);
       try {
         // Request all completed inspections (completedLimit <= 0 => no limit)
         const body = await getInspectionsPartitioned({ completedLimit: 0 });
@@ -59,6 +62,8 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection, onR
       } catch (e) {
         console.warn('Failed to fetch inspections for history', e);
         setSourceInspections([]);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     };
 
@@ -90,7 +95,7 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection, onR
     const id = String(rec.id || rec.inspection_id || '');
     const venueName = String(rec.venueName || rec.venue_name || rec.venue || '');
     const roomName = String(rec.roomName || rec.room_name || rec.room || '');
-    const inspectorName = String(rec.inspectorName || rec.createdBy || rec.created_by || rec.inspector_name || '');
+    const inspectorName = String(rec.createdBy || rec.created_by || '');
 
     // Prefer explicit timestamps from the server
     const updatedAt = rec.updatedAt || '';
@@ -136,7 +141,7 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection, onR
     const searchLower = searchTerm.toLowerCase();
     const venueName = String(inspection.venueName || inspection.venue_name || inspection.venue || '').toLowerCase();
     const roomName = String(inspection.roomName || inspection.room_name || inspection.room || '').toLowerCase();
-    const inspectorName = String(inspection.inspectorName || inspection.created_by || inspection.inspector_name || inspection.createdBy || '').toLowerCase();
+    const inspectorName = String(inspection.createdBy || inspection.created_by || '').toLowerCase();
 
     const matchesSearch =
       venueName.includes(searchLower) ||
@@ -265,6 +270,7 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection, onR
 
   return (
     <div className="min-h-screen bg-white">
+      <LoadingOverlay visible={loading} message={"Loading completed inspections…"} />
       <div className="max-w-6xl mx-auto">
         {/* Header */}
         <div className="bg-blue-600 text-white p-6 lg:p-8">

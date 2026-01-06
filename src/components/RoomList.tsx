@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { getInspectionsPartitioned } from '../utils/inspectionApi';
 
 import { getVenueById } from '../utils/venueApi';
+import LoadingOverlay from './LoadingOverlay';
 import FadeIn from 'react-fade-in';
 
 interface RoomListProps {
@@ -27,6 +28,10 @@ export function RoomList({ venue: propVenue, venueId, onRoomSelect, onBack, insp
   const serverByRoomSet = React.useRef(false);
   // Keep raw server byRoom so we can remap to venue room ids when venue loads
   const rawServerByRoomRef = React.useRef<Record<string, any> | null>(null);
+
+  // Loading states for consistent overlay UX
+  const [venueLoading, setVenueLoading] = useState<boolean>(false);
+  const [summaryLoading, setSummaryLoading] = useState<boolean>(false);
 
   // Simple mapping: match server byRoom keys to venue room ids using exact, suffix, or stripped comparisons
   const simpleMapByRoomToVenue = (rawByRoom: Record<string, any>, rooms: Room[] | undefined) => {
@@ -78,8 +83,9 @@ export function RoomList({ venue: propVenue, venueId, onRoomSelect, onBack, insp
         return;
       }
 
-      console.log('[RoomList] attempting to load venue for id:', vid);
+          console.log('[RoomList] attempting to load venue for id:', vid);
       try {
+        setVenueLoading(true);
         const v = await getVenueById(String(vid));
         console.log('[RoomList] getVenueById result for', vid, v);
         if (cancelled) return;
@@ -91,6 +97,8 @@ export function RoomList({ venue: propVenue, venueId, onRoomSelect, onBack, insp
         }
       } catch (e) {
         console.warn('Failed to load venue for RoomList', e);
+      } finally {
+        setVenueLoading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -101,95 +109,100 @@ export function RoomList({ venue: propVenue, venueId, onRoomSelect, onBack, insp
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
-      if (!inspectionId) {
-        serverByRoomSet.current = false;
-        setRoomCounts({});
-        setSummaryTotals(null);
-        return;
-      }
-
+      setSummaryLoading(true);
       try {
-        const body = await getInspectionsPartitioned();
-        console.debug('[RoomList] partitioned body:', body);
-        if (!body) {
-          // If we previously received a server byRoom, don't clear authoritative per-room counts on transient missing body
+        if (!inspectionId) {
+          serverByRoomSet.current = false;
+          setRoomCounts({});
+          setSummaryTotals(null);
+          return;
+        }
+
+        try {
+          const body = await getInspectionsPartitioned();
+          console.debug('[RoomList] partitioned body:', body);
+          if (!body) {
+            // If we previously received a server byRoom, don't clear authoritative per-room counts on transient missing body
+            if (!serverByRoomSet.current) {
+              setRoomCounts({});
+              setSummaryTotals(null);
+            }
+            return;
+          }
+
+          // Find the inspection summary in the partitioned body (it may be in 'inspections', 'completed' or top-level array)
+          const candidates: any[] = [];
+          if (Array.isArray(body.inspections)) candidates.push(...body.inspections);
+          if (Array.isArray(body.completed)) candidates.push(...body.completed);
+          if (Array.isArray(body.ongoing)) candidates.push(...body.ongoing);
+          // Also consider top-level 'items' for older payload shapes
+          if (Array.isArray(body)) candidates.push(...body as any[]);
+
+          const found = candidates.find((c: any) => String(c.inspection_id || c.id || '') === String(inspectionId));
+          console.debug('[RoomList] found summary in partitioned candidates:', found);
+          if (found) {
+            console.debug('[RoomList] server byRoom keys:', found.byRoom ? Object.keys(found.byRoom) : 'none', 'venue room ids:', (venue?.rooms || []).map(r => r.id));
+            // Prefer using server-provided totals if present
+            if (found.totals) { setSummaryTotals(found.totals || null); }
+
+            // Use byRoom when available; when missing, preserve previously-set authoritative byRoom if present
+            if (found.byRoom) {
+              rawServerByRoomRef.current = found.byRoom || {};
+              // If venue is loaded, map server keys to venue room ids; otherwise attempt to fetch venue immediately to map
+              if (venue && venue.rooms && venue.rooms.length > 0) {
+                const mapped = simpleMapByRoomToVenue(found.byRoom || {}, venue.rooms as Room[]);
+                setRoomCounts(mapped);
+                serverByRoomSet.current = true;
+              } else {
+                // attempt to fetch venue by id and map immediately (avoids timing issues where venue state isn't updated yet)
+                try {
+                  const vid = found.venueId || found.venue_id || (found.raw && (found.raw.venueId || found.raw.venue_id));
+                  if (vid) {
+                    const v = await getVenueById(String(vid));
+                    if (v && v.rooms && v.rooms.length > 0) {
+                      const mapped = simpleMapByRoomToVenue(found.byRoom || {}, (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })) as Room[]);
+                      setRoomCounts(mapped);
+                      // update cached venue so UI uses same room ids
+                      const mappedVenue = { id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || '', updatedAt: v.updatedAt || v.createdAt || '', createdBy: v.createdBy || '' } as Venue;
+                      setVenue(mappedVenue);
+                      if (typeof onVenueLoaded === 'function') onVenueLoaded(mappedVenue);
+                      serverByRoomSet.current = true;
+                      return;
+                    }
+                  }
+                } catch (e) {
+                  console.warn('[RoomList] failed to fetch venue for immediate mapping', e);
+                }
+
+                // Fallback: store raw counts (will be remapped when venue loads)
+                setRoomCounts(found.byRoom || {});
+                serverByRoomSet.current = true;
+              }
+              return;
+            } else {
+              if (!serverByRoomSet.current) {
+                // we never had authoritative byRoom; ensure no data is present
+                setRoomCounts({});
+              }
+              // keep summaryTotals if present (we already set it above)
+              return;
+            }
+          }
+
+          // If no summary available at all, reset everything
+          serverByRoomSet.current = false;
+          setRoomCounts({});
+          setSummaryTotals(null);
+        } catch (e) {
+          console.warn('Failed to load inspections partitioned body', e);
+          // Be conservative on error: do not wipe authoritative byRoom
           if (!serverByRoomSet.current) {
             setRoomCounts({});
             setSummaryTotals(null);
           }
-          return;
         }
-
-        // Find the inspection summary in the partitioned body (it may be in 'inspections', 'completed' or top-level array)
-        const candidates: any[] = [];
-        if (Array.isArray(body.inspections)) candidates.push(...body.inspections);
-        if (Array.isArray(body.completed)) candidates.push(...body.completed);
-        if (Array.isArray(body.ongoing)) candidates.push(...body.ongoing);
-        // Also consider top-level 'items' for older payload shapes
-        if (Array.isArray(body)) candidates.push(...body as any[]);
-
-        const found = candidates.find((c: any) => String(c.inspection_id || c.id || '') === String(inspectionId));
-        console.debug('[RoomList] found summary in partitioned candidates:', found);
-        if (found) {
-          console.debug('[RoomList] server byRoom keys:', found.byRoom ? Object.keys(found.byRoom) : 'none', 'venue room ids:', (venue?.rooms || []).map(r => r.id));
-          // Prefer using server-provided totals if present
-          if (found.totals) { setSummaryTotals(found.totals || null); }
-
-          // Use byRoom when available; when missing, preserve previously-set authoritative byRoom if present
-          if (found.byRoom) {
-            rawServerByRoomRef.current = found.byRoom || {};
-            // If venue is loaded, map server keys to venue room ids; otherwise attempt to fetch venue immediately to map
-            if (venue && venue.rooms && venue.rooms.length > 0) {
-              const mapped = simpleMapByRoomToVenue(found.byRoom || {}, venue.rooms as Room[]);
-              setRoomCounts(mapped);
-              serverByRoomSet.current = true;
-            } else {
-              // attempt to fetch venue by id and map immediately (avoids timing issues where venue state isn't updated yet)
-              try {
-                const vid = found.venueId || found.venue_id || (found.raw && (found.raw.venueId || found.raw.venue_id));
-                if (vid) {
-                  const v = await getVenueById(String(vid));
-                  if (v && v.rooms && v.rooms.length > 0) {
-                    const mapped = simpleMapByRoomToVenue(found.byRoom || {}, (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })) as Room[]);
-                    setRoomCounts(mapped);
-                    // update cached venue so UI uses same room ids
-                    const mappedVenue = { id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || '', updatedAt: v.updatedAt || v.createdAt || '', createdBy: v.createdBy || '' } as Venue;
-                    setVenue(mappedVenue);
-                    if (typeof onVenueLoaded === 'function') onVenueLoaded(mappedVenue);
-                    serverByRoomSet.current = true;
-                    return;
-                  }
-                }
-              } catch (e) {
-                console.warn('[RoomList] failed to fetch venue for immediate mapping', e);
-              }
-
-              // Fallback: store raw counts (will be remapped when venue loads)
-              setRoomCounts(found.byRoom || {});
-              serverByRoomSet.current = true;
-            }
-            return;
-          } else {
-            if (!serverByRoomSet.current) {
-              // we never had authoritative byRoom; ensure no data is present
-              setRoomCounts({});
-            }
-            // keep summaryTotals if present (we already set it above)
-            return;
-          }
-        }
-
-        // If no summary available at all, reset everything
-        serverByRoomSet.current = false;
-        setRoomCounts({});
-        setSummaryTotals(null);
-      } catch (e) {
-        console.warn('Failed to load inspections partitioned body', e);
-        // Be conservative on error: do not wipe authoritative byRoom
-        if (!serverByRoomSet.current) {
-          setRoomCounts({});
-          setSummaryTotals(null);
-        }
+      } finally {
+        setSummaryLoading(false);
       }
     };
 
@@ -242,10 +255,11 @@ export function RoomList({ venue: propVenue, venueId, onRoomSelect, onBack, insp
     }
   })();
 
-  // If venue is not yet loaded, show a small loading state instead of crashing
+  // If venue is not yet loaded, show the standard LoadingOverlay and a simple note
   if (!venue) {
     return (
       <div className="min-h-screen bg-white">
+        <LoadingOverlay visible={true} message={"Loading venue…"} />
         <div className="max-w-4xl mx-auto p-6">
           <div className="bg-blue-600 text-white p-6 lg:p-8 mb-4">
             <button onClick={onBack} className="flex items-center gap-2 text-blue-100 hover:text-white mb-4 lg:mb-6 text-sm lg:text-base">
@@ -265,6 +279,7 @@ export function RoomList({ venue: propVenue, venueId, onRoomSelect, onBack, insp
 
   return (
     <div className="min-h-screen bg-white">
+      <LoadingOverlay visible={venueLoading || summaryLoading} message={venueLoading ? 'Loading venue…' : 'Loading…'} />
       <div className="max-w-4xl mx-auto">
         {/* Header */}
         <div className="bg-blue-600 text-white p-6 lg:p-8">

@@ -15,6 +15,8 @@ interface AuthContextType {
   logout: () => void;
   updateProfile: (updates: Partial<User>) => void;
   isAuthenticated: boolean;
+  // Returns the display name to use in UI / author fields
+  getDisplayName: () => string;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -90,6 +92,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // Convenience helper: returns display name for UI and author fields
+  const getDisplayName = () => user?.name || 'Unknown';
+
   return (
     <AuthContext.Provider
       value={{
@@ -98,6 +103,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         logout,
         updateProfile,
         isAuthenticated: !!user,
+        getDisplayName,
       }}
     >
       {children}
@@ -111,4 +117,10 @@ export function useAuth() {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
+}
+
+// Convenience hook for components wanting the current display name
+export function useDisplayName() {
+  const { getDisplayName } = useAuth();
+  return getDisplayName();
 }

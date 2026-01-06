@@ -116,7 +116,7 @@ export function Dashboard({ onBack }: DashboardProps) {
           // Compute inspector performance
           const inspectorMap: Record<string, { completed: number; totalItems: number; totalPasses: number; times: number[] }> = {};
           completedArr.forEach((ins: any) => {
-            const iname = String(ins.inspectorName || ins.inspector_name || ins.created_by || ins.createdBy || ins.updatedBy || ins.updated_by || 'Unknown');
+            const iname = String(ins.createdBy || ins.created_by || ins.updatedBy || ins.updated_by || 'Unknown');
             const t = ins.totals;
             if (!inspectorMap[iname]) inspectorMap[iname] = { completed: 0, totalItems: 0, totalPasses: 0, times: [] };
             inspectorMap[iname].completed += 1;

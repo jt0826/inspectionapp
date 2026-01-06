@@ -4,6 +4,7 @@ import { ArrowLeft, Building2, Plus, Trash2, Save, Minus } from 'lucide-react';
 import type { Venue, Room } from '../types/venue';
 import LoadingOverlay from './LoadingOverlay';
 import { generateVenueId, generateRoomId, generateItemId } from '../utils/id';
+import { useDisplayName } from '../contexts/AuthContext';
 
 import { API } from '../config/api'; // consolidated venues-create endpoint
 
@@ -17,6 +18,7 @@ interface VenueFormProps {
 export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
   const [name, setName] = useState(venue?.name || '');
   const [address, setAddress] = useState(venue?.address || '');
+  const displayName = useDisplayName();
   // Rooms now include items: { id, name }
   const [rooms, setRooms] = useState<any[]>(
     venue?.rooms?.map((r: any) => ({ ...r, items: r.items || [] })) || [{ id: generateRoomId(), name: '', items: [] }]
@@ -105,7 +107,7 @@ export function VenueForm({ venue, onSave, onBack, isEdit }: VenueFormProps) {
       venueId,
       name: name.trim(),
       address: address.trim(),
-      createdBy: venue?.createdBy || 'Current User',
+      createdBy: venue?.createdBy || displayName,
       rooms: rooms.map((room) => ({
         roomId: room.id || generateRoomId(),
         name: room.name.trim(),

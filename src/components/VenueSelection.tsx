@@ -4,6 +4,7 @@ import type { Venue } from '../types/venue';
 import LoadingOverlay from './LoadingOverlay';
 import { API } from '../config/api';
 import { generateInspectionId } from '../utils/id';
+import { useDisplayName } from '../contexts/AuthContext';
 
 interface VenueSelectionProps {
   venues: Venue[];
@@ -21,6 +22,7 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
   const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
   const [localVenues, setLocalVenues] = useState<Venue[]>(venues || []);
   const [creating, setCreating] = useState(false);
+  const displayName = useDisplayName();
 
   // If parent didn't provide venues, load them on mount so selection is available
 
@@ -66,12 +68,10 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
       action: 'create_inspection',
       inspection: {
         inspection_id: inspectionId,
-        createdBy: 'Current User',
-        updatedBy: 'Current User',
-        inspectorName: 'Current User',
+        createdBy: displayName,
+        updatedBy: displayName,
         venueId: selectedVenue?.id,
         venueName: selectedVenue?.name,
-        venue_name: selectedVenue?.name,
         status: 'in-progress',
         completedAt: null,
       }

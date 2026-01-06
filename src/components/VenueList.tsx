@@ -36,6 +36,7 @@ export function VenueList({
 
   const [deleting, setDeleting] = useState(false);
   const [computing, setComputing] = useState(false); // true while computing counts before delete confirmation
+  const [loading, setLoading] = useState(false);
   const [localVenues, setLocalVenues] = useState<Venue[]>(venues || []);
   const [rawInspectionsCount, setRawInspectionsCount] = useState<Record<string, number>>({});
   const [inspectionsList, setInspectionsList] = useState<any[]>([]);
@@ -115,8 +116,10 @@ export function VenueList({
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      setLoading(true);
       if (venues && venues.length > 0) {
         setLocalVenues(venues);
+        setLoading(false);
         return;
       }
       try {
@@ -127,6 +130,8 @@ export function VenueList({
         if (typeof onVenuesLoaded === 'function') onVenuesLoaded(mapped);
       } catch (e) {
         console.warn('Failed to load venues on VenueList mount', e);
+      } finally {
+        setLoading(false);
       }
     })();
     return () => { cancelled = true; };
@@ -238,7 +243,7 @@ export function VenueList({
 
   return (
     <div className="min-h-screen bg-white">
-      <LoadingOverlay visible={deleting || computing} message={deleting ? 'Deleting…' : 'Checking linked inspections…'} />
+      <LoadingOverlay visible={loading || deleting || computing} message={loading ? 'Loading venues…' : deleting ? 'Deleting…' : 'Checking linked inspections…'} />
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="bg-blue-600 text-white p-6 lg:p-8">
