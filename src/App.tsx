@@ -16,6 +16,7 @@ import { VenueLayout } from './components/VenueLayout';
 import { API } from './config/api';
 import { generateItemId, generateInspectionId } from './utils/id';
 import { useNavigation, View } from './hooks/useNavigation';
+import { useInspections } from './hooks/useInspections';
 import { Dashboard } from './components/Dashboard';
 import { useToast } from './components/ToastProvider';
 import { getVenueById } from './utils/venueApi';
@@ -99,7 +100,7 @@ function AppContent() {
   // App keeps a `venues` state that will be populated by child pages via callbacks when necessary.
   const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
   const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
-  const [inspections, setInspections] = useState<Inspection[]>([]);
+  const { inspections, currentInspectionId, isCreating, createInspection, updateInspection, deleteInspection, selectInspection, setInspections } = useInspections();
   const [pendingVenueId, setPendingVenueId] = useState<string | null>(null);
 
   // NOTE: Database-sourced inspections are now fetched by `InspectorHome` to avoid duplicate network calls.
@@ -114,9 +115,9 @@ function AppContent() {
   }, [inspections]);
   const [editingInspection, setEditingInspection] = useState<Inspection | null>(null);
   const [editingInspectionIndex, setEditingInspectionIndex] = useState<number | null>(null);
-  const [currentInspectionId, setCurrentInspectionId] = useState<string | null>(null);
   // When true, user has initiated "Create New Inspection" but we haven't created it on the server yet
-  const [isCreatingNewInspection, setIsCreatingNewInspection] = useState<boolean>(false);
+  // Use hook-provided `isCreating` instead of local state
+  
 
   const handleVenueSelect = (venue: Venue) => {
     setSelectedVenue(venue);
@@ -215,7 +216,7 @@ function AppContent() {
       setInspections([...inspections, updatedInspection]);
     }
 
-    setCurrentInspectionId(null);
+    selectInspection(null);
     setSelectedVenue(null);
     setSelectedRoom(null);
     navigate('home');
@@ -224,7 +225,7 @@ function AppContent() {
   const handleCreateNewInspection = () => {
     // Start a create flow but DO NOT create a draft on the server yet.
     // The actual inspection will be created when the user presses Create in the VenueSelection.
-    setIsCreatingNewInspection(true);
+    selectInspection(null);
     setSelectedVenue(null);
     setSelectedRoom(null);
     navigate('selectVenue');
@@ -254,8 +255,7 @@ function AppContent() {
     }
 
     setInspections(prev => [...prev, simpleInspection]);
-    setCurrentInspectionId(id);
-    setIsCreatingNewInspection(false);
+    selectInspection(id);
 
     // Set the venue context so UI can show confirmation. Prefer local venue; otherwise use originVenue (optimistic) or mark pendingVenueId
     const vid = simpleInspection.venueId;
@@ -308,7 +308,7 @@ function AppContent() {
     if (typeof inspectionOrId === 'string') {
       const inspection = inspections.find(i => i.id === inspectionOrId);
       if (!inspection) return;
-      setCurrentInspectionId(inspectionOrId);
+      selectInspection(inspectionOrId);
       if (inspection.venueId) {
         const venue = venues.find(v => v.id === inspection.venueId);
         if (venue) {
@@ -376,7 +376,7 @@ function AppContent() {
       setInspections(prev => [...prev, simpleInspection]);
     }
 
-    setCurrentInspectionId(id);
+    selectInspection(id);
 
     // set read-only flag when inspection is completed
     setInspectionReadOnly((simpleInspection.status || '').toString().toLowerCase() === 'completed');
@@ -414,14 +414,13 @@ function AppContent() {
   };
 
   const handleBackFromVenueSelect = () => {
-    setIsCreatingNewInspection(false);
     navigate('home');
   };
 
   const handleBackFromRooms = () => {
     if (currentInspectionId) {
       // If we're in an inspection flow, go back to home
-      setCurrentInspectionId(null);
+      selectInspection(null);
       setSelectedVenue(null);
       setSelectedRoom(null);
       navigate('home');
@@ -448,7 +447,7 @@ function AppContent() {
     } else {
       // No venue selected (e.g., a newly-created inspection without venue context) — navigate to Home
       // Clear inspection context to avoid leaving stale state
-      setCurrentInspectionId(null);
+      selectInspection(null);
       setSelectedRoom(null);
       navigate('home');
     }
@@ -461,7 +460,7 @@ function AppContent() {
   };
 
   const handleBackToHome = () => {
-    setCurrentInspectionId(null);
+    selectInspection(null);
     setSelectedVenue(null);
     setSelectedRoom(null);
     navigate('home');
@@ -654,7 +653,7 @@ function AppContent() {
 
   const handleReturnHomeFromConfirm = () => {
     // Keep the inspection as ongoing (already saved with venue info)
-    setCurrentInspectionId(null);
+    selectInspection(null);
     setSelectedVenue(null);
     navigate('home');
   };
@@ -685,7 +684,7 @@ function AppContent() {
           onVenueSelect={handleVenueSelect}
           onBack={handleBackFromVenueSelect}
           currentInspectionId={currentInspectionId}
-          isCreatingNewInspection={isCreatingNewInspection}
+          isCreatingNewInspection={isCreating}
           onInspectionCreated={handleInspectionCreated}
         />
       )}
