@@ -391,14 +391,21 @@ Performance reports are generated in:
 - We will use lowercase-with-hyphens with a short but informative name.
 
 **Prefix Table:**
-| Purpose | Prefix |
+| Prefix | Purpose |
 |-------|----------|
 | `feature/` | New functionality |
-| `bugfix/` | Bug fixes |
+| `fix/` | Bug fixes |
 | `hotfix/` | Urgent production fixes |
 | `refactor/` | Code cleanup/improvement |
 | `docs/` | Documentation changes |
 | `chore/` | Maintenance tasks |
+
+***Examples:***
+- fix/login-error
+- feature/user-profile-update
+- feature/new-dashboard
+- hotfix/critical-payment-error
+- refactor/cleanup-api-routes
 
 
 ---
