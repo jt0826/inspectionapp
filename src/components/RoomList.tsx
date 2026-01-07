@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { getInspectionsPartitioned } from '../utils/inspectionApi';
 
 import { getVenueById } from '../utils/venueApi';
+import { useInspectionContext } from '../contexts/InspectionContext';
 import LoadingOverlay from './LoadingOverlay';
 import FadeIn from 'react-fade-in';
 
@@ -32,6 +33,11 @@ export function RoomList({ venue: propVenue, venueId, onRoomSelect, onBack, insp
   // Loading states for consistent overlay UX
   const [venueLoading, setVenueLoading] = useState<boolean>(false);
   const [summaryLoading, setSummaryLoading] = useState<boolean>(false);
+  // Re-run partitioned summary load whenever `refreshKey` increments or when
+  // `lastLoadedInspections` is published by InspectorHome (snapshot optimization).
+  // Consumers should not rely on these being present — RoomList will still fetch
+  // from the server when necessary.
+  const { refreshKey, lastLoadedInspections } = useInspectionContext();
 
   // Simple mapping: match server byRoom keys to venue room ids using exact, suffix, or stripped comparisons
   const simpleMapByRoomToVenue = (rawByRoom: Record<string, any>, rooms: Room[] | undefined) => {
@@ -208,13 +214,8 @@ export function RoomList({ venue: propVenue, venueId, onRoomSelect, onBack, insp
 
     load();
 
-    const onSaved = () => { if (!cancelled) load(); };
-    const onLoaded = (ev: any) => { if (!cancelled) load(); };
-    window.addEventListener('inspectionSaved', onSaved as EventListener);
-    window.addEventListener('inspectionsLoaded', onLoaded as EventListener);
-
-    return () => { cancelled = true; window.removeEventListener('inspectionSaved', onSaved as EventListener); window.removeEventListener('inspectionsLoaded', onLoaded as EventListener); };
-  }, [inspectionId]);
+    return () => { cancelled = true; };
+  }, [inspectionId, /* re-run when global refresh triggers */ refreshKey, /* also re-run if InspectorHome publishes a last-loaded snapshot */ lastLoadedInspections]);
 
   // When venue becomes available, remap any raw server byRoom to venue room ids
   useEffect(() => {

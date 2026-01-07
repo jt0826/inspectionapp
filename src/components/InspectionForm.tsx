@@ -9,6 +9,7 @@ import { API } from '../config/api';
 import { generatePhotoId, generateItemId, generateInspectionId } from '../utils/id';
 import { useToast } from './ToastProvider';
 import LoadingOverlay from './LoadingOverlay';
+import { useInspectionContext } from '../contexts/InspectionContext';
 
 interface InspectionFormProps {
   venue: Venue;
@@ -126,6 +127,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
   const [saving, setSaving] = useState(false);
   const [loadingSaved, setLoadingSaved] = useState(false); // true while we fetch saved inspection data
   const { show, confirm } = useToast();
+  const { triggerRefresh } = useInspectionContext();
 
   // Search/filter UI
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -483,11 +485,11 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
         console.log('save_inspection response', data);
         // do not navigate away on Save; show brief confirmation instead (global toast)
         show('Saved', { variant: 'success' });
-        // Notify listeners so the home view can refresh counts/summary on any successful save
+        // Use the context-based refresh to notify interested views (Home, History, RoomList)
+        // that server-side state changed. We call `triggerRefresh()` here instead of a global
+        // DOM event so that refresh intent remains explicit and testable.
         try {
-          if (typeof window !== 'undefined') {
-            window.dispatchEvent(new CustomEvent('inspectionSaved', { detail: { inspectionId: inspectionToSubmit.id } }));
-          }
+          triggerRefresh?.();
         } catch (e) {
           /* ignore */
         }

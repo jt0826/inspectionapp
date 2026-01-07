@@ -5,6 +5,7 @@ import LoadingOverlay from './LoadingOverlay';
 import { API } from '../config/api';
 import { generateInspectionId } from '../utils/id';
 import { useDisplayName } from '../contexts/AuthContext';
+import { useInspectionContext } from '../contexts/InspectionContext';
 
 interface VenueSelectionProps {
   venues: Venue[];
@@ -23,6 +24,7 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
   const [localVenues, setLocalVenues] = useState<Venue[]>(venues || []);
   const [creating, setCreating] = useState(false);
   const displayName = useDisplayName();
+  const { triggerRefresh } = useInspectionContext();
 
   // If parent didn't provide venues, load them on mount so selection is available
 
@@ -99,9 +101,11 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
           // Pass the created inspection and the selectedVenue so the parent can optimistically show venue details
           onInspectionCreated(created || { inspection_id: inspectionId, venueId: selectedVenue?.id, venueName: selectedVenue?.name, venue_name: selectedVenue?.name, status: 'in-progress' }, selectedVenue);
         }
-        // Notify UI listeners that an inspection was created so counts refresh
+        // After creating an inspection on the server, notify app-wide consumers that
+        // inspection lists have changed via `triggerRefresh()`. This avoids using
+        // global DOM events and keeps update flow explicit to React components.
         try {
-          if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('inspectionSaved', { detail: { inspectionId: created?.inspection_id || inspectionId } }));
+          triggerRefresh?.();
         } catch (e) { /* ignore */ }      } else {
         console.error('Failed to create inspection');
       }

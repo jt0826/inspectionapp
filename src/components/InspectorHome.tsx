@@ -6,6 +6,7 @@ import FadeInText from './FadeInText';
 import InspectionCard from './InspectionCard';
 import { useAuth } from '../contexts/AuthContext';
 import { useToast } from './ToastProvider';
+import { useInspectionContext } from '../contexts/InspectionContext';
 import FadeIn from 'react-fade-in';
 import LoadingOverlay from './LoadingOverlay';
 import { API } from '../config/api';
@@ -186,13 +187,17 @@ export function InspectorHome({
       } catch (e) {
         /* ignore */
       }
-      // Notify interested consumers (e.g., VenueList) so they can compute per-venue inspection counts
+      // Store the last-loaded inspections in the InspectionContext so other components
+      // (e.g., VenueList) can read them without relying on global events.
       try {
-        if (typeof window !== 'undefined' && window.dispatchEvent) {
-          window.dispatchEvent(new CustomEvent('inspectionsLoaded', { detail: { inspections: inspectionsArray } }));
-        }
+        // Publish a snapshot of the most-recently-loaded inspections into the InspectionContext
+        // so other components (for example, `VenueList`) can consume the server-provided
+        // partitioned response synchronously and avoid an extra network request. This is
+        // intentionally an optional optimization: consumers should gracefully fall back to
+        // fetching if no snapshot exists.
+        setLastLoadedInspections?.(inspectionsArray);
       } catch (e) {
-        console.warn('Failed to dispatch inspectionsLoaded event', e);
+        console.warn('Failed to set lastLoadedInspections in InspectionContext', e);
       }
     } catch (error) {
       console.error('Error fetching inspections:', error);
@@ -216,14 +221,16 @@ export function InspectorHome({
       setVenuesMap({});
     }
   }, [venues]);
+  const { refreshKey, setLastLoadedInspections } = useInspectionContext();
+
   useEffect(() => {
+    // Refresh on mount and when the global refreshKey increments
     fetchInspections();
     const onFocus = () => { fetchInspections(); };
-    const onInspectionSaved = () => { fetchInspections(); };
     window.addEventListener('focus', onFocus);
-    window.addEventListener('inspectionSaved', onInspectionSaved as EventListener);
-    return () => { window.removeEventListener('focus', onFocus); window.removeEventListener('inspectionSaved', onInspectionSaved as EventListener); };
-  }, [fetchInspections]);
+    return () => { window.removeEventListener('focus', onFocus); };
+  }, [fetchInspections, refreshKey]);
+
 
   // Replace client-side enrichment with server-sourced summaries only
   useEffect(() => {

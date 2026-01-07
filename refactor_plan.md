@@ -518,75 +518,75 @@ useEffect(() => {
 
 ---
 
-## Phase 4: Replace Window Events with Context
+## Phase 4: Replace Window Events with Context (Detailed) ✅
 
-### 4.1 Create Inspection Context
+**Goal**
+- Replace brittle global DOM events (`window.dispatchEvent` / `window.addEventListener`) used for cross-component refresh with a React-first **InspectionContext** provider that exposes state, helpers and an explicit refresh trigger.
 
-**Problem:** Components communicate via `window.dispatchEvent('inspectionSaved')`
+Why this matters
+- Global events are hard to reason about, hard to test, and create implicit coupling between modules. A context-based refresh keeps reactivity explicit, type-safe, and testable. 🔧
 
-**Current event dispatches:**
+What we provide
+- `InspectionProvider` (wraps app)
+- Hook: `useInspectionContext()` exposing:
+  - inspections state & helpers (all methods from `useInspections`) ✅
+  - refresh tooling: `refreshKey: number` and `triggerRefresh()` ✅
+  - optional snapshot support: `lastLoadedInspections` and `setLastLoadedInspections()` (for InspectorHome -> VenueList sync)
 
-- inspectionApi.ts - after delete
-- App.tsx - after venue selection persisted
-- App.tsx - after room selection persisted
-- InspectionForm.tsx - after save
-- VenueSelection.tsx - after create
-
-**Current listeners:**
-
-- InspectorHome.tsx
-- InspectionHistory.tsx
-- VenueList.tsx
-
-**Create new file:** `src/contexts/InspectionContext.tsx`
-
+Quick example (consumers):
 ```tsx
-import React, { createContext, useContext, useCallback, useState } from 'react';
-import { useInspections } from '../hooks/useInspections';
+const { triggerRefresh } = useInspectionContext();
+// call after creating, saving, or deleting an inspection
+triggerRefresh();
 
-interface InspectionContextValue {
-  // All values from useInspections
-  inspections: Inspection[];
-  currentInspection: Inspection | null;
-  // ... etc
-
-  // Refresh trigger for components that need to refetch
-  refreshKey: number;
-  triggerRefresh: () => void;
-}
-
-const InspectionContext = createContext<InspectionContextValue | null>(null);
-
-export function InspectionProvider({ children }: { children: React.ReactNode }) {
-  const inspectionsHook = useInspections();
-  const [refreshKey, setRefreshKey] = useState(0);
-
-  const triggerRefresh = useCallback(() => {
-    setRefreshKey(k => k + 1);
-  }, []);
-
-  return (
-    <InspectionContext.Provider value={{ ...inspectionsHook, refreshKey, triggerRefresh }}>
-      {children}
-    </InspectionContext.Provider>
-  );
-}
-
-export const useInspectionContext = () => {
-  const ctx = useContext(InspectionContext);
-  if (!ctx) throw new Error('useInspectionContext must be used within InspectionProvider');
-  return ctx;
-};
-
+// or react to refreshes
+const { refreshKey } = useInspectionContext();
+useEffect(() => { fetchList(); }, [refreshKey]);
 ```
 
-**Files to update:**
+Implementation checklist (step-by-step) 🔁
+1. Add `src/contexts/InspectionContext.tsx` that wraps `useInspections()` and exposes `refreshKey`, `triggerRefresh`, `lastLoadedInspections`, `setLastLoadedInspections`.
+2. Add the provider to the app root (wrap `AppContent` in `App.tsx`) so the context is available everywhere.
+3. Replace any writer-side global dispatches with `triggerRefresh()` (or `setLastLoadedInspections` when publishing a snapshot):
+   - `InspectionForm.tsx` → call `triggerRefresh()` after a successful save
+   - `VenueSelection.tsx` → call `triggerRefresh()` after creating an inspection
+   - `inspectionApi.deleteInspection()` → do not dispatch; return result and let the caller call `triggerRefresh()` after verifying success
+4. Replace listener-side `window.addEventListener('inspectionSaved'|'inspectionsLoaded')` with context-driven logic:
+   - `InspectorHome.tsx` → re-fetch on mount and whenever `refreshKey` changes; publish snapshot via `setLastLoadedInspections(inspectionsArray)` after load
+   - `RoomList.tsx` → re-run partitioned summary load when either `refreshKey` or `lastLoadedInspections` change (no DOM events)
+   - `VenueList.tsx` → read `lastLoadedInspections` snapshot instead of listening for `inspectionsLoaded` events
+   - `InspectionHistory.tsx` → re-run fetch on `refreshKey` changes
+5. Delete or stop emitting legacy global events (leave no `dispatchEvent('inspectionSaved')`/`dispatchEvent('inspectionsLoaded')` calls).
 
-| File | Current Code | Replace With |
-| --- | --- | --- |
-| inspectionApi.ts | `window.dispatchEvent(...)` | Return result, let caller handle |
-| InspectorHome.tsx | `window.addEventListener(...)` | `useEffect` with `refreshKey` dep |
-| VenueList.tsx | `window.addEventListener(...)` | `useEffect` with `refreshKey` dep |
+Code notes & examples (realized during implementation) 🔧
+- Prefer calling `triggerRefresh()` at call sites that are already within components (hooks available). For non-component utilities, return the operation result and let callers decide whether to call `triggerRefresh()`.
+- Use `lastLoadedInspections` as an optional mechanism to publish a server-provided snapshot (useful where home pre-computes counts that other views can consume synchronously).
+
+Testing & verification ✅
+- Unit tests (Vitest / React Testing Library):
+  - Verify `triggerRefresh()` increments `refreshKey` and causes dependent hook `useEffect` calls to re-run.
+  - Test `InspectorHome` sets `lastLoadedInspections` after a fetch and `VenueList` reads it.
+  - Test `deleteInspection()` from `inspectionApi` returns a value and does NOT call `window.dispatchEvent`.
+- Manual QA:
+  1. Create an inspection via `VenueSelection` — Home counts update without page refresh. ✅
+  2. Save an inspection in `InspectionForm` — Home/History/RoomList refresh accordingly. ✅
+  3. Delete an inspection — counts and lists update and no console errors about missing listeners. ✅
+
+Backward compatibility and migration considerations ⚠️
+- During the transition add both mechanisms (context + legacy event) only if necessary for staged rollouts. Prefer to remove legacy events quickly to avoid surprises.
+- Non-React code (scripts, ephemeral tooling) that used `window.dispatchEvent` should be updated to call exported helper functions or be migrated to use contexts in their hosting UI.
+
+PR checklist (what to include in the PR body) 📋
+- Summary of changes (files added/modified)
+- How to test locally (manual steps + automated tests added)
+- Rationale for moving away from global events
+- Note any behavior changes consumers should expect (e.g., `inspectionApi.deleteInspection` no longer triggers global events)
+
+Next steps (follow-up work) ➕
+- Create `VenueContext` to hold venue-related shared state (optional but recommended). Migrate any remaining venue event patterns to it. — **Planned**
+- Add Vitest tests for context behavior (`triggerRefresh` and `lastLoadedInspections`) — **High priority**
+
+---
 
 ---
 

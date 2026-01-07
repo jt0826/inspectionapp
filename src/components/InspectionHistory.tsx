@@ -16,6 +16,7 @@ interface InspectionHistoryProps {
 }
 
 import { useToast } from './ToastProvider';
+import { useInspectionContext } from '../contexts/InspectionContext';
 
 export function InspectionHistory({ inspections, onBack, onDeleteInspection, onResumeInspection }: InspectionHistoryProps) {
   const [searchTerm, setSearchTerm] = useState('');
@@ -23,6 +24,9 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection, onR
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const { show, confirm } = useToast();
+  // Re-fetch history when `refreshKey` increments in the InspectionContext so that
+  // history stays in sync after create/save/delete operations elsewhere in the app.
+  const { refreshKey } = useInspectionContext();
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
@@ -70,12 +74,11 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection, onR
     fetchList();
 
     const onFocus = () => { fetchList(); };
-    const onSaved = () => { fetchList(); };
     window.addEventListener('focus', onFocus);
-    window.addEventListener('inspectionSaved', onSaved as EventListener);
 
-    return () => { cancelled = true; window.removeEventListener('focus', onFocus); window.removeEventListener('inspectionSaved', onSaved as EventListener); };
-  }, []);
+    // Re-run when the global inspection refreshKey increments
+    return () => { cancelled = true; window.removeEventListener('focus', onFocus); };
+  }, [refreshKey]);
 
   // Use sourceInspections if present, otherwise use the parent inspections prop
   const effectiveInspections: any[] = (sourceInspections && sourceInspections.length > 0) ? sourceInspections : inspections;

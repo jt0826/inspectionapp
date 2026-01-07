@@ -7,6 +7,7 @@ import { useToast } from './ToastProvider';
 import type { Inspection } from '../types/inspection';
 
 import { getVenues } from '../utils/venueApi';
+import { useInspectionContext } from '../contexts/InspectionContext';
 import LoadingOverlay from './LoadingOverlay';
 
 interface VenueListProps {
@@ -44,37 +45,53 @@ export function VenueList({
   // Use global toast + confirm
   const { show, confirm } = useToast();
 
-  // Listen for inspectionsLoaded events emitted by InspectorHome and keep both the raw list and a raw count map
+  const { lastLoadedInspections } = useInspectionContext();
+
+  // If InspectorHome publishes a snapshot of the server's inspections list into the
+  // context, we use that snapshot to compute per-venue counts synchronously. This
+  // avoids an extra round-trip and keeps the UI snappy; VenueList falls back to
+  // server fetches if no snapshot exists.
   useEffect(() => {
-    const handler = (e: any) => {
+    const handler = (ins: any[] = []) => {
       try {
-        const ins: any[] = e?.detail?.inspections || [];
-        setInspectionsList(ins || []);
+        const result = ins || [];
+        setInspectionsList(result);
         const rawMap: Record<string, number> = {};
-        (ins || []).forEach((it: any) => {
+        (result || []).forEach((it: any) => {
           const vid = String(it?.venueId || it?.venue_id || it?.venue || '');
           if (!vid) return;
           rawMap[vid] = (rawMap[vid] || 0) + 1;
         });
         setRawInspectionsCount(rawMap);
       } catch (err) {
-        console.warn('Failed to compute raw inspections count from inspectionsLoaded event', err);
+        console.warn('Failed to compute raw inspections count from lastLoadedInspections snapshot', err);
       }
     };
 
-    // If InspectorHome already fetched inspections, read the cached data synchronously
+    // If InspectorHome already fetched inspections into the context, use that snapshot
+    try {
+      if (Array.isArray(lastLoadedInspections)) {
+        handler(lastLoadedInspections);
+        return;
+      }
+    } catch (e) {
+      // fallback to legacy window cache
+    }
+
     try {
       const cached = (window as any).__inspectionsData;
       if (Array.isArray(cached)) {
-        handler({ detail: { inspections: cached } });
+        handler(cached);
+        return;
       }
     } catch (e) {
       /* ignore */
     }
 
-    window.addEventListener('inspectionsLoaded', handler as EventListener);
-    return () => window.removeEventListener('inspectionsLoaded', handler as EventListener);
-  }, []);
+    // No active snapshot available; leave counts empty until a snapshot is published
+    handler([]);
+
+  }, [lastLoadedInspections]);
 
   // Reconcile raw inspection counts to canonical venue IDs whenever raw counts or local venues change
   useEffect(() => {

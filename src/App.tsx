@@ -16,6 +16,7 @@ import { VenueLayout } from './components/VenueLayout';
 import { API } from './config/api';
 import { generateItemId, generateInspectionId } from './utils/id';
 import { useNavigation, View } from './hooks/useNavigation';
+import { InspectionProvider } from './contexts/InspectionContext';
 import { useInspections } from './hooks/useInspections';
 import { useVenues } from './hooks/useVenues';
 import { Dashboard } from './components/Dashboard';
@@ -693,9 +694,11 @@ export default function App() {
   return (
     <AuthProvider>
       <ToastProvider>
-        <div className="min-h-screen bg-gray-50">
-          <AppContent />
-        </div>
+        <InspectionProvider>
+          <div className="min-h-screen bg-gray-50">
+            <AppContent />
+          </div>
+        </InspectionProvider>
       </ToastProvider>
     </AuthProvider>
   );

@@ -78,14 +78,14 @@ export async function deleteInspection(inspectionId: string, opts?: { cascade?: 
     // Parse body summary if included
     const parsed = data && data.summary ? data.summary : (data && data.body && data.body.summary ? data.body.summary : null);
 
-    // Notify UI listeners that an inspection changed (deleted)
-    try {
-      if (typeof window !== 'undefined') {
-        window.dispatchEvent(new CustomEvent('inspectionSaved', { detail: { inspectionId } }));
-      }
-    } catch (e) {
-      // ignore
-    }
+    // NOTE: Historically this helper dispatched a global `inspectionSaved` DOM event so
+    // that unrelated UI components could refresh themselves. That pattern has been retired
+    // in favor of the `InspectionContext` refresh mechanism.
+    // - This function now returns the HTTP result; callers (components or hooks) are
+    //   responsible for calling `triggerRefresh()` from `useInspectionContext()` after
+    //   they verify the delete succeeded. This separation keeps the API layer pure and
+    //   avoids implicit global side effects that are hard to test.
+    // (No-op here.)
 
     return { ok: true, status: res.status, data, summary: parsed };
   } catch (e) {
