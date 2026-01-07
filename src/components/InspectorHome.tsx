@@ -54,6 +54,7 @@ export function InspectorHome({
 
   // Local UI state for delete flow
   const [deleting, setDeleting] = useState(false);
+  const [computing, setComputing] = useState(false); // true while checking linked images before delete confirmation
   const { show, confirm } = useToast();
   const [activeCount, setActiveCount] = useState<number | null>(null);
 
@@ -389,24 +390,39 @@ export function InspectorHome({
     e.stopPropagation();
     const id = String(inspection['id'] || inspection['inspection_id'] || '');
 
+    // Step 1: compute deletion impact (images count, etc.) with a loading UI
+    setComputing(true);
+    let imageCount = 0;
     try {
-      const { listImagesForInspection, deleteInspection } = await import('../utils/inspectionApi');
+      const { listImagesForInspection } = await import('../utils/inspectionApi');
       const images = await listImagesForInspection(id);
-      const imageCount = (images && images.length) || 0;
+      imageCount = (images && images.length) || 0;
+    } catch (computeErr) {
+      console.warn('Failed to compute image counts for delete confirmation', computeErr);
+      show('Failed to compute deletion details. Try again.', { variant: 'error' });
+      setComputing(false);
+      return;
+    } finally {
+      // Stop showing the computing overlay before showing the confirmation dialog
+      setComputing(false);
+    }
 
-      const confirmed = await confirm({
-        title: 'Delete inspection',
-        message: `Are you sure you want to delete the inspection for ${inspection.venueName || id}? This will also delete ${imageCount} uploaded image${imageCount !== 1 ? 's' : ''}.`,
-        confirmLabel: 'Delete',
-        cancelLabel: 'Cancel',
-      });
-      if (!confirmed) return;
+    const confirmed = await confirm({
+      title: 'Delete inspection',
+      message: `Are you sure you want to delete the inspection for ${inspection.venueName || id}? This will also delete ${imageCount} uploaded image${imageCount !== 1 ? 's' : ''}.`,
+      confirmLabel: 'Delete',
+      cancelLabel: 'Cancel',
+    });
+    if (!confirmed) return;
 
+    // Step 2: proceed with deletion (separate loading state)
+    try {
       setDeleting(true);
       setDeletingIds(prev => [...prev, id]);
 
       show('Deleting inspection and images…', { variant: 'info' });
 
+      const { deleteInspection } = await import('../utils/inspectionApi');
       const token = localStorage.getItem('authToken') || '';
       const result = await deleteInspection(id, { cascade: true }, token);
 
@@ -441,7 +457,7 @@ export function InspectorHome({
   
   return (
     <div className="min-h-screen bg-white">
-      <LoadingOverlay visible={loading || deleting} message={deleting ? 'Deleting…' : 'Loading…'} />
+      <LoadingOverlay visible={loading || deleting || computing} message={computing ? 'Checking linked images…' : deleting ? 'Deleting…' : 'Loading…'} />
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="bg-blue-600 text-white p-6 lg:p-8">

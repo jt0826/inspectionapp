@@ -23,6 +23,7 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
   const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
   const [localVenues, setLocalVenues] = useState<Venue[]>(venues || []);
   const [creating, setCreating] = useState(false);
+  const [loadingVenues, setLoadingVenues] = useState<boolean>(false);
   const displayName = useDisplayName();
   const { triggerRefresh } = useInspectionContext();
 
@@ -35,6 +36,7 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
         setLocalVenues(venues);
         return;
       }
+      setLoadingVenues(true);
       try {
         const { getVenues } = await import('../utils/venueApi');
         const items = await getVenues();
@@ -43,6 +45,8 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
         setLocalVenues(mapped);
       } catch (e) {
         console.warn('Failed to load venues for selection', e);
+      } finally {
+        setLoadingVenues(false);
       }
     })();
     return () => { cancelled = true; };
@@ -119,6 +123,7 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
 
   return (
     <div className="min-h-screen bg-white">
+      <LoadingOverlay visible={loadingVenues} message={"Loading venues…"} />
       <div className="max-w-4xl mx-auto pb-24">
         {/* Header */}
         <div className="bg-blue-600 text-white p-6 lg:p-8">
