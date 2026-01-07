@@ -393,12 +393,12 @@ Performance reports are generated in:
 **Prefix Table:**
 | Purpose | Prefix |
 |-------|----------|
-| `feature/` | `New functionality` |
-| `bugfix/` | `Bug fixes` |
-| `hotfix/` | `Urgent production fixes` |
-| `refactor/` | `Code cleanup/improvement` |
-| `docs/` | `Documentation changes` |
-| `chore/` | `Maintenance tasks` |
+| `feature/` | New functionality |
+| `bugfix/` | Bug fixes |
+| `hotfix/` | Urgent production fixes |
+| `refactor/` | Code cleanup/improvement |
+| `docs/` | Documentation changes |
+| `chore/` | Maintenance tasks |
 
 
 ---
