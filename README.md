@@ -389,8 +389,9 @@ Performance reports are generated in:
 
 ### Branch Naming Conventions
 - We will use lowercase-with-hyphens with a short but informative name.
+**Prefix Table:**
 | Purpose | Prefix |
-|-------|----------|------|
+|-------|----------|
 | `feature/` | `New functionality` |
 | `bugfix/` | `Bug fixes` |
 | `hotfix/` | `Urgent production fixes` |
