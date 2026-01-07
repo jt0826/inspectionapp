@@ -26,3 +26,24 @@ export function normalizeInspectionItem(raw: any): InspectionItem {
     photos: raw.photos || [],
   } as InspectionItem;
 }
+
+// Venue normalizers
+export function normalizeVenue(raw: any) {
+  return {
+    id: raw.venueId || raw.id || '',
+    name: raw.name || '',
+    address: raw.address || '',
+    rooms: (raw.rooms || []).map(normalizeRoom),
+    createdAt: raw.createdAt || '',
+    updatedAt: raw.updatedAt || raw.createdAt || '',
+    createdBy: raw.createdBy || '',
+  };
+}
+
+export function normalizeRoom(raw: any) {
+  return {
+    id: raw.roomId || raw.id || '',
+    name: raw.name || '',
+    items: (raw.items || []).map((it: any) => ({ id: it.itemId || it.id || '', name: it.name || it.item || '' })),
+  };
+}

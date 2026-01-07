@@ -17,6 +17,7 @@ import { API } from './config/api';
 import { generateItemId, generateInspectionId } from './utils/id';
 import { useNavigation, View } from './hooks/useNavigation';
 import { useInspections } from './hooks/useInspections';
+import { useVenues } from './hooks/useVenues';
 import { Dashboard } from './components/Dashboard';
 import { useToast } from './components/ToastProvider';
 import { getVenueById } from './utils/venueApi';
@@ -76,7 +77,7 @@ function AppContent() {
   const { currentView, navigate, goBack, goHome } = useNavigation();
   const [inspectionReadOnly, setInspectionReadOnly] = useState<boolean>(false);
   // Replace hard-coded venues with data from backend
-  const [venues, setVenues] = useState<Venue[]>([]);
+  const { venues, selectedVenue, selectedRoom, pendingVenueId, fetchVenues, selectVenue, selectRoom, deleteVenue, saveVenue, setVenues, setPendingVenueId } = useVenues();
   // API base moved to `src/config/api.ts` (use `API` constants)
 
 
@@ -98,10 +99,11 @@ function AppContent() {
 
   // NOTE: Venue fetching is now performed by VenueList and RoomList when those pages load.
   // App keeps a `venues` state that will be populated by child pages via callbacks when necessary.
-  const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
-  const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
+  // moved to useVenues
+  // const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
+  // const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
   const { inspections, currentInspectionId, isCreating, createInspection, updateInspection, deleteInspection, selectInspection, setInspections } = useInspections();
-  const [pendingVenueId, setPendingVenueId] = useState<string | null>(null);
+  // pendingVenueId handled by useVenues
 
   // NOTE: Database-sourced inspections are now fetched by `InspectorHome` to avoid duplicate network calls.
   // The App-level code no longer fetches `list_inspections` to prevent unnecessary duplication and reduce load.
@@ -120,8 +122,8 @@ function AppContent() {
   
 
   const handleVenueSelect = (venue: Venue) => {
-    setSelectedVenue(venue);
-    
+    selectVenue(venue);
+
     // If we have a current inspection (ongoing), update it with venue info
     if (currentInspectionId) {
       setInspections(inspections.map(insp => 
@@ -140,7 +142,7 @@ function AppContent() {
   };
 
   const handleRoomSelect = (room: Room) => {
-    setSelectedRoom(room);
+    selectRoom(room);
 
     // If we have a current inspection, update it with room info
     if (currentInspectionId) {
@@ -183,8 +185,8 @@ function AppContent() {
     const room = venue?.rooms.find((r) => r.id === inspection.roomId);
     
     if (venue && room) {
-      setSelectedVenue(venue);
-      setSelectedRoom(room);
+      selectVenue(venue);
+      selectRoom(room);
       
       // Create a new inspection with only failed items
       const failedItemsInspection: Inspection = {
@@ -217,8 +219,8 @@ function AppContent() {
     }
 
     selectInspection(null);
-    setSelectedVenue(null);
-    setSelectedRoom(null);
+    selectVenue(null);
+    selectRoom(null);
     navigate('home');
   };
 
@@ -226,8 +228,8 @@ function AppContent() {
     // Start a create flow but DO NOT create a draft on the server yet.
     // The actual inspection will be created when the user presses Create in the VenueSelection.
     selectInspection(null);
-    setSelectedVenue(null);
-    setSelectedRoom(null);
+    selectVenue(null);
+    selectRoom(null);
     navigate('selectVenue');
   };
 
@@ -262,29 +264,29 @@ function AppContent() {
     if (originVenue && !vid) {
       // If we have originVenue but no vid (edge case), apply originVenue
       console.debug('handleInspectionCreated: using originVenue for missing vid', originVenue.id);
-      setSelectedVenue(originVenue);
+      selectVenue(originVenue);
       setPendingVenueId(null);
     } else if (vid) {
       const v = venues.find(x => x.id === vid);
       if (v) {
         console.debug('handleInspectionCreated: found local venue for vid=', vid);
-        setSelectedVenue(v);
+        selectVenue(v);
       } else if (originVenue) {
         console.debug('handleInspectionCreated: using originVenue for vid=', vid, 'originVenue=', originVenue?.id);
         // Use the originVenue provided by the creator (optimistic show) and clear pending
-        setSelectedVenue(originVenue);
+        selectVenue(originVenue);
         console.debug('handleInspectionCreated: clearing pendingVenueId');
         setPendingVenueId(null);
       } else {
         // Venue not found locally: set pendingVenueId so the confirmation screen can fetch it from the server
         console.debug('handleInspectionCreated: venue not found locally; setting pendingVenueId=', vid);
         setPendingVenueId(vid);
-        setSelectedVenue(null);
+        selectVenue(null);
       }
     } else {
       // No venue information available: clear selection and let confirmation handle it
       console.debug('handleInspectionCreated: no venue available on created inspection and no originVenue; clearing pendingVenueId');
-      setSelectedVenue(null);
+      selectVenue(null);
       setPendingVenueId(null);
     }
     navigate('confirmInspection');
@@ -312,11 +314,11 @@ function AppContent() {
       if (inspection.venueId) {
         const venue = venues.find(v => v.id === inspection.venueId);
         if (venue) {
-          setSelectedVenue(venue);
+          selectVenue(venue);
           if (inspection.roomId) {
             const room = venue.rooms.find(r => r.id === inspection.roomId);
             if (room) {
-              setSelectedRoom(room);
+              selectRoom(room);
               // fetch existing saved items for this inspection and room
               fetchInspectionItems(inspectionOrId, room.id).then((items) => {
                 if (items && items.length > 0) {
@@ -384,11 +386,11 @@ function AppContent() {
     // Find the venue
     const venue = venues.find(v => v.id === simpleInspection.venueId);
     if (venue) {
-      setSelectedVenue(venue);
+      selectVenue(venue);
       if (simpleInspection.roomId) {
         const room = venue.rooms.find(r => r.id === simpleInspection.roomId);
         if (room) {
-          setSelectedRoom(room);
+          selectRoom(room);
           // fetch saved items for this inspection & room, then set editingInspection
           fetchInspectionItems(id, room.id).then((items) => {
             if (items && items.length > 0) {
@@ -414,6 +416,8 @@ function AppContent() {
   };
 
   const handleBackFromVenueSelect = () => {
+    // clear any selected venue in the create flow
+    selectVenue(null);
     navigate('home');
   };
 
@@ -421,12 +425,12 @@ function AppContent() {
     if (currentInspectionId) {
       // If we're in an inspection flow, go back to home
       selectInspection(null);
-      setSelectedVenue(null);
-      setSelectedRoom(null);
+      selectVenue(null);
+      selectRoom(null);
       navigate('home');
     } else {
       // Old behavior
-      setSelectedVenue(null);
+      selectVenue(null);
       navigate('venues');
     }
   };
@@ -442,13 +446,13 @@ function AppContent() {
 
     if (selectedVenue) {
       // Normal flow: go back to the room list within the selected venue
-      setSelectedRoom(null);
+      selectRoom(null);
       navigate('rooms');
     } else {
       // No venue selected (e.g., a newly-created inspection without venue context) — navigate to Home
       // Clear inspection context to avoid leaving stale state
       selectInspection(null);
-      setSelectedRoom(null);
+      selectRoom(null);
       navigate('home');
     }
   };
@@ -461,132 +465,56 @@ function AppContent() {
 
   const handleBackToHome = () => {
     selectInspection(null);
-    setSelectedVenue(null);
-    setSelectedRoom(null);
+    selectVenue(null);
+    selectRoom(null);
     navigate('home');
   };
 
   const handleAddVenue = () => {
-    setSelectedVenue(null);
+    selectVenue(null);
     navigate('addVenue');
   };
 
   const handleEditVenue = (venue: Venue) => {
-    setSelectedVenue(venue);
+    selectVenue(venue);
     navigate('editVenue');
   };
 
   const handleDeleteVenue = async (venueId: string) => {
-    // Determine inspections to delete and attempt a cascading delete of images first
-    const originalVenues = venues;
+    // Delegate deletion to hook which performs optimistic local update + server call
     const originalInspections = inspections;
-
-    const toDeleteInspections = inspections.filter((i) => i.venueId === venueId).map(i => i.id);
     try {
-      if (toDeleteInspections.length > 0) {
-        show('Deleting associated inspection images…', { variant: 'info' });
-        const { deleteInspection } = await import('./utils/inspectionApi');
-        const promises = toDeleteInspections.map((iid) => deleteInspection(iid, { cascade: true }));
-        const settled = await Promise.allSettled(promises);
-        let totalImagesDeleted = 0;
-        const failures: any[] = [];
-        settled.forEach((s: any) => {
-          if (s.status === 'fulfilled' && s.value && s.value.ok) totalImagesDeleted += (s.value.summary?.deletedImages || 0);
-          else failures.push(s.reason || s.value);
-        });
-        if (failures.length > 0) {
-          console.warn('Some cascading deletes failed:', failures);
-          show('Some images failed to delete. Venue delete will proceed; check console for details.', { variant: 'info' });
-        } else {
-          show(`Deleted ${totalImagesDeleted} images for this venue`, { variant: 'success' });
-        }
-      }
-    } catch (e) {
-      console.warn('Cascading delete images failed', e);
-      show('Failed to delete some images for this venue; continuing with venue delete', { variant: 'info' });
-    }
-
-    // Optimistic UI update for venue and inspections
-    setVenues(venues.filter((v) => v.id !== venueId));
-    setInspections(inspections.filter((i) => i.venueId !== venueId));
-
-    try {
-      const res = await fetch(API.venuesCreate, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'delete_venue', venueId }),
-      });
-
-      if (!res.ok) {
-        const text = await res.text();
-        console.error('Failed to delete venue:', res.status, text);
-        // revert UI
-        setVenues(originalVenues);
-        setInspections(originalInspections);
-        alert('Failed to delete venue. See console for details.');
-        return;
-      }
-
-      const data = await res.json();
-      // backend may return { message: 'Deleted' } or proxy { body }
-      const body = data?.body ? (typeof data.body === 'string' ? JSON.parse(data.body) : data.body) : data;
-      console.log('delete_venue response', data, body);
-
-      // If the backend returned a summary of deletes, display toast messages similar to inspection deletion
-      const summary = data?.summary || body?.summary || null;
-      if (summary) {
-        const inspectionsDeleted = summary.deleted_metadata || summary.inspections_found || summary.deleted_items || 0;
-        const imagesDeleted = summary.deleted_s3_objects || summary.deleted_image_rows || 0;
-        if (inspectionsDeleted > 0) {
-          show(`Deleted ${inspectionsDeleted} inspections for this venue`, { variant: 'success' });
-        }
-        if (imagesDeleted > 0) {
-          show(`Deleted ${imagesDeleted} images for this venue`, { variant: 'success' });
-        }
-      }
-
-      // Server-side state already reflected via local update; VenueList will refresh when opened if needed.
+      // Remove dependent inspections locally for UI responsiveness
+      setInspections(inspections.filter((i) => i.venueId !== venueId));
+      await deleteVenue(venueId);
+      show('Venue deleted', { variant: 'success' });
       return true;
     } catch (err) {
+      // revert inspection state on failure
+      setInspections(originalInspections);
       console.error('Error deleting venue:', err);
-      setVenues(originalVenues);
       alert('Error deleting venue. See console.');
       return false;
     }
   };
 
-  const handleSaveVenue = (venue: Venue, isEdit?: boolean) => {
-    if (!isEdit) {
-      // Creation flow: append venue and navigate back to venues list
-      const newVenue = {
-        ...venue,
-        createdBy: displayName,
-      };
-      setVenues([...venues, newVenue]);
-
-      // After creating, navigate back to the venues list
+  const handleSaveVenue = async (venue: Venue, isEdit?: boolean) => {
+    // Delegate to useVenues to persist & update local state
+    try {
+      await saveVenue({ ...venue, createdBy: venue.createdBy || displayName }, isEdit);
+      // Update inspections records' venueName when editing
+      if (isEdit) {
+        setInspections(
+          inspections.map((i) =>
+            i.venueId === venue.id ? { ...i, venueName: venue.name } : i
+          )
+        );
+      }
       navigate('venues');
-    } else {
-      // Edit flow: update in-place and remain on edit screen
-      const updatedVenue = {
-        ...venue,
-      };
-      setVenues(venues.map((v) => (v.id === venue.id ? updatedVenue : v)));
-      setInspections(
-        inspections.map((i) =>
-          i.venueId === venue.id ? { ...i, venueName: venue.name } : i
-        )
-      );
-
-      // If this venue is currently selected in the app state, keep it updated so the edit screen reflects latest data
-      try {
-        if (selectedVenue && String(selectedVenue.id) === String(venue.id)) {
-          setSelectedVenue(updatedVenue);
-        }
-      } catch (e) { /* ignore */ }
+    } catch (e) {
+      console.error('Failed to save venue', e);
+      alert('Failed to save venue. See console for details.');
     }
-
-    // VenueList will refresh from backend when the Manage Venues screen is opened if necessary.
   };
 
   const handleEditInspection = (inspection: Inspection, index: number) => {
@@ -594,8 +522,8 @@ function AppContent() {
     const room = venue?.rooms.find((r) => r.id === inspection.roomId);
     
     if (venue && room) {
-      setSelectedVenue(venue);
-      setSelectedRoom(room);
+      selectVenue(venue);
+      selectRoom(room);
       setEditingInspection(inspection);
       setEditingInspectionIndex(index);
       navigate('inspection');
@@ -614,15 +542,15 @@ function AppContent() {
   const handleBack = () => {
     if (currentView === 'rooms') {
       navigate('venues');
-      setSelectedVenue(null);
+      selectVenue(null);
     } else if (currentView === 'inspection') {
       navigate('rooms');
-      setSelectedRoom(null);
+      selectRoom(null);
       setEditingInspection(null);
       setEditingInspectionIndex(null);
     } else {
       navigate('venues');
-      setSelectedVenue(null);
+      selectVenue(null);
     }
   };
 
@@ -634,27 +562,15 @@ function AppContent() {
     navigate('dashboard');
   };
 
-  const handleConfirmInspection = async () => {
-    if (!selectedVenue && pendingVenueId) {
-      try {
-        const v = await getVenueById(String(pendingVenueId));
-        if (v) {
-          const mapped = { id: v.venueId || v.id, name: v.name || '', address: v.address || '', rooms: (v.rooms || []).map((r: any) => ({ id: r.roomId || r.id, name: r.name || '', items: r.items || [] })), createdAt: v.createdAt || '', updatedAt: v.updatedAt || v.createdAt || '', createdBy: v.createdBy || '' } as Venue;
-          setSelectedVenue(mapped);
-        }
-      } catch (e) {
-        console.warn('Failed to load venue before confirming inspection', e);
-      } finally {
-        setPendingVenueId(null);
-      }
-    }
+  const handleConfirmInspection = () => {
+    // Simplified: RoomList will fetch venue when required (see refactor_plan.md 3.4)
     navigate('rooms');
   };
 
   const handleReturnHomeFromConfirm = () => {
     // Keep the inspection as ongoing (already saved with venue info)
     selectInspection(null);
-    setSelectedVenue(null);
+    selectVenue(null);
     navigate('home');
   };
 
@@ -706,7 +622,7 @@ function AppContent() {
         <VenueList
           venues={venues}
           onVenueSelect={handleVenueSelect}
-          onViewVenue={(v) => { setSelectedVenue(v); navigate('venueLayout'); }}
+          onViewVenue={(v) => { selectVenue(v); navigate('venueLayout'); }}
           onViewProfile={handleViewProfile}
           onAddVenue={handleAddVenue}
           onEditVenue={handleEditVenue}
@@ -724,7 +640,7 @@ function AppContent() {
           onBack={handleBackFromRooms}
           inspections={inspections}
           inspectionId={currentInspectionId}
-          onVenueLoaded={(v) => { setSelectedVenue(v); setPendingVenueId(null); }}
+          onVenueLoaded={(v) => { selectVenue(v); setPendingVenueId(null); }}
         />
       )}
 

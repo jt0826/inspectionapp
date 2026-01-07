@@ -4,13 +4,45 @@ import { normalizeInspection } from '../utils/normalizers';
 import { API } from '../config/api';
 import { generateInspectionId } from '../utils/id';
 
+/**
+ * useInspections - Hook to manage inspection collection and the active inspection.
+ *
+ * Responsibilities
+ * - Keep an in-memory list of normalized `Inspection` objects
+ * - Track the currently selected inspection id and derived `currentInspection`
+ * - Provide helper operations to create, update, delete, and select inspections
+ *
+ * Notes
+ * - `createInspection` calls the remote API (`API.inspectionsCreate`) and normalizes
+ *   the server response using `normalizeInspection`. It sets `isCreating` while the
+ *   request is in flight and adds the created inspection to the local state.
+ * - `updateInspection` and `deleteInspection` are local, synchronous updates to the
+ *   in-memory collection; persistence should be handled by the caller if necessary.
+ */
 export function useInspections() {
+  /** List of inspections in canonical frontend shape (normalized) */
   const [inspections, setInspections] = useState<Inspection[]>([]);
+
+  /** Currently-selected inspection id (or null if none selected) */
   const [currentInspectionId, setCurrentInspectionId] = useState<string | null>(null);
+
+  /** True while a createInspection call is in progress */
   const [isCreating, setIsCreating] = useState(false);
 
+  /** Derived currently selected inspection object (or null) */
   const currentInspection = inspections.find(i => i.id === currentInspectionId) || null;
 
+  /**
+   * createInspection(payload)
+   * - payload: { venueId?, venueName?, createdBy?, updatedBy?, status? }
+   * - Returns: Promise<Inspection> (the created inspection)
+   * - Side effects: POST to `API.inspectionsCreate`, normalizes response,
+   *   appends to `inspections`, and selects the created inspection.
+   * - Throws: if the network request returns non-OK status.
+   *
+   * Usage:
+   *   const created = await createInspection({ venueId: 'v1', createdBy: 'Alice' });
+   */
   const createInspection = useCallback(async (payload: { venueId?: string; venueName?: string; createdBy?: string } ) => {
     setIsCreating(true);
     try {
@@ -47,15 +79,30 @@ export function useInspections() {
     }
   }, []);
 
+  /**
+   * updateInspection(id, updates)
+   * - Synchronously apply partial updates to the inspection identified by `id`.
+   * - Note: This does not persist to the server. Use this for optimistic UI updates
+   *   or when the caller is responsible for persistence.
+   */
   const updateInspection = useCallback((id: string, updates: Partial<Inspection>) => {
     setInspections(prev => prev.map(insp => (insp.id === id ? { ...insp, ...updates } : insp)));
   }, []);
 
+  /**
+   * deleteInspection(id)
+   * - Remove the inspection from local state. If the deleted inspection was selected,
+   *   clear the selection.
+   */
   const deleteInspection = useCallback((id: string) => {
     setInspections(prev => prev.filter(i => i.id !== id));
     setCurrentInspectionId(prev => (prev === id ? null : prev));
   }, []);
 
+  /**
+   * selectInspection(id)
+   * - Set the currently selected inspection id (or null to clear selection).
+   */
   const selectInspection = useCallback((id: string | null) => {
     setCurrentInspectionId(id);
   }, []);
