@@ -387,6 +387,18 @@ Performance reports are generated in:
 - `lighthouse-report.json` — Development build
 - `lighthouse-prod-report.json` — Production build
 
+### Branch Naming Conventions
+- We will use lowercase-with-hyphens with a short but informative name.
+| Purpose | Prefix |
+|-------|----------|------|
+| `feature/` | `New functionality` |
+| `bugfix/` | `Bug fixes` |
+| `hotfix/` | `Urgent production fixes` |
+| `refactor/` | `Code cleanup/improvement` |
+| `docs/` | `Documentation changes` |
+| `chore/` | `Maintenance tasks` |
+
+
 ---
 
 ## License
