@@ -15,6 +15,7 @@ import { InspectionConfirmation } from './components/InspectionConfirmation';
 import { VenueLayout } from './components/VenueLayout';
 import { API } from './config/api';
 import { generateItemId, generateInspectionId } from './utils/id';
+import { useNavigation, View } from './hooks/useNavigation';
 import { Dashboard } from './components/Dashboard';
 import { useToast } from './components/ToastProvider';
 import { getVenueById } from './utils/venueApi';
@@ -68,24 +69,10 @@ const mockVenues: Venue[] = [
   },
 ];
 
-type View =
-  | 'home'
-  | 'venues'
-  | 'rooms'
-  | 'inspection'
-  | 'addVenue'
-  | 'editVenue'
-  | 'profile'
-  | 'history'
-  | 'selectVenue'
-  | 'confirmInspection'
-  | 'venueLayout'
-  | 'dashboard';
-
 function AppContent() {
   const { isAuthenticated, user } = useAuth();
   const displayName = useDisplayName();
-  const [currentView, setCurrentView] = useState<View>('home');
+  const { currentView, navigate, goBack, goHome } = useNavigation();
   const [inspectionReadOnly, setInspectionReadOnly] = useState<boolean>(false);
   // Replace hard-coded venues with data from backend
   const [venues, setVenues] = useState<Venue[]>([]);
@@ -144,10 +131,10 @@ function AppContent() {
 
       // Do NOT persist venue/room selections automatically. Saving should only occur when the user
       // explicitly presses the "Save" button in the Inspection form (server-authoritative saves).
-      setCurrentView('confirmInspection');
+      navigate('confirmInspection');
     } else {
       // Old behavior for venue management
-      setCurrentView('rooms');
+      navigate('rooms');
     }
   };
 
@@ -187,7 +174,7 @@ function AppContent() {
       }
     }
     
-    setCurrentView('inspection');
+    navigate('inspection');
   };
 
   const handleReInspection = (inspection: Inspection) => {
@@ -210,7 +197,7 @@ function AppContent() {
       
       setEditingInspection(failedItemsInspection);
       setEditingInspectionIndex(null);
-      setCurrentView('inspection');
+      navigate('inspection');
     }
   };
 
@@ -231,7 +218,7 @@ function AppContent() {
     setCurrentInspectionId(null);
     setSelectedVenue(null);
     setSelectedRoom(null);
-    setCurrentView('home');
+    navigate('home');
   };
 
   const handleCreateNewInspection = () => {
@@ -240,7 +227,7 @@ function AppContent() {
     setIsCreatingNewInspection(true);
     setSelectedVenue(null);
     setSelectedRoom(null);
-    setCurrentView('selectVenue');
+    navigate('selectVenue');
   };
 
   // Called by VenueSelection when a new inspection was created on the server
@@ -300,7 +287,7 @@ function AppContent() {
       setSelectedVenue(null);
       setPendingVenueId(null);
     }
-    setCurrentView('confirmInspection');
+    navigate('confirmInspection');
   };
   const fetchInspectionItems = async (inspectionId: string, roomId?: string) => {
     try {
@@ -350,15 +337,15 @@ function AppContent() {
                   });
                 }
               }).catch(() => {});
-              setCurrentView('inspection');
+              navigate('inspection');
               return;
             }
           }
-          setCurrentView('rooms');
+          navigate('rooms');
           return;
         }
       }
-      setCurrentView('selectVenue');
+      navigate('selectVenue');
       return;
     }
 
@@ -413,22 +400,22 @@ function AppContent() {
               setEditingInspection({ ...simpleInspection, items: mapped });
             }
           }).catch(() => {});
-          setCurrentView('inspection');
+          navigate('inspection');
           return;
         }
       }
-      setCurrentView('rooms');
+      navigate('rooms');
       return;
     }
 
     // If venue not found locally, navigate to rooms and allow RoomList to fetch the venue when it mounts
     setPendingVenueId(simpleInspection.venueId || null);
-    setCurrentView(simpleInspection.venueId ? 'rooms' : 'selectVenue');
+    navigate(simpleInspection.venueId ? 'rooms' : 'selectVenue');
   };
 
   const handleBackFromVenueSelect = () => {
     setIsCreatingNewInspection(false);
-    setCurrentView('home');
+    navigate('home');
   };
 
   const handleBackFromRooms = () => {
@@ -437,11 +424,11 @@ function AppContent() {
       setCurrentInspectionId(null);
       setSelectedVenue(null);
       setSelectedRoom(null);
-      setCurrentView('home');
+      navigate('home');
     } else {
       // Old behavior
       setSelectedVenue(null);
-      setCurrentView('venues');
+      navigate('venues');
     }
   };
 
@@ -457,37 +444,37 @@ function AppContent() {
     if (selectedVenue) {
       // Normal flow: go back to the room list within the selected venue
       setSelectedRoom(null);
-      setCurrentView('rooms');
+      navigate('rooms');
     } else {
       // No venue selected (e.g., a newly-created inspection without venue context) — navigate to Home
       // Clear inspection context to avoid leaving stale state
       setCurrentInspectionId(null);
       setSelectedRoom(null);
-      setCurrentView('home');
+      navigate('home');
     }
   };
 
   const { show, confirm } = useToast();
 
   const handleViewHistory = () => {
-    setCurrentView('history');
+    navigate('history');
   };
 
   const handleBackToHome = () => {
     setCurrentInspectionId(null);
     setSelectedVenue(null);
     setSelectedRoom(null);
-    setCurrentView('home');
+    navigate('home');
   };
 
   const handleAddVenue = () => {
     setSelectedVenue(null);
-    setCurrentView('addVenue');
+    navigate('addVenue');
   };
 
   const handleEditVenue = (venue: Venue) => {
     setSelectedVenue(venue);
-    setCurrentView('editVenue');
+    navigate('editVenue');
   };
 
   const handleDeleteVenue = async (venueId: string) => {
@@ -579,7 +566,7 @@ function AppContent() {
       setVenues([...venues, newVenue]);
 
       // After creating, navigate back to the venues list
-      setCurrentView('venues');
+      navigate('venues');
     } else {
       // Edit flow: update in-place and remain on edit screen
       const updatedVenue = {
@@ -612,7 +599,7 @@ function AppContent() {
       setSelectedRoom(room);
       setEditingInspection(inspection);
       setEditingInspectionIndex(index);
-      setCurrentView('inspection');
+      navigate('inspection');
     }
   };
 
@@ -627,25 +614,25 @@ function AppContent() {
 
   const handleBack = () => {
     if (currentView === 'rooms') {
-      setCurrentView('venues');
+      navigate('venues');
       setSelectedVenue(null);
     } else if (currentView === 'inspection') {
-      setCurrentView('rooms');
+      navigate('rooms');
       setSelectedRoom(null);
       setEditingInspection(null);
       setEditingInspectionIndex(null);
     } else {
-      setCurrentView('venues');
+      navigate('venues');
       setSelectedVenue(null);
     }
   };
 
   const handleViewProfile = () => {
-    setCurrentView('profile');
+    navigate('profile');
   };
 
   const handleViewDashboard = () => {
-    setCurrentView('dashboard');
+    navigate('dashboard');
   };
 
   const handleConfirmInspection = async () => {
@@ -662,14 +649,14 @@ function AppContent() {
         setPendingVenueId(null);
       }
     }
-    setCurrentView('rooms');
+    navigate('rooms');
   };
 
   const handleReturnHomeFromConfirm = () => {
     // Keep the inspection as ongoing (already saved with venue info)
     setCurrentInspectionId(null);
     setSelectedVenue(null);
-    setCurrentView('home');
+    navigate('home');
   };
 
   if (!isAuthenticated) {
@@ -686,7 +673,7 @@ function AppContent() {
           onResumeInspection={handleResumeInspection}
           onViewHistory={handleViewHistory}
           onViewProfile={handleViewProfile}
-          onManageVenues={() => setCurrentView('venues')}
+          onManageVenues={() => navigate('venues')}
           onViewDashboard={handleViewDashboard}
           onDeleteInspection={handleDeleteInspectionById}
         />
@@ -704,7 +691,7 @@ function AppContent() {
       )}
 
       {currentView === 'dashboard' && (
-        <Dashboard onBack={() => setCurrentView('home')} />
+        <Dashboard onBack={() => navigate('home')} />
       )}
 
       {currentView === 'confirmInspection' && (
@@ -720,12 +707,12 @@ function AppContent() {
         <VenueList
           venues={venues}
           onVenueSelect={handleVenueSelect}
-          onViewVenue={(v) => { setSelectedVenue(v); setCurrentView('venueLayout'); }}
+          onViewVenue={(v) => { setSelectedVenue(v); navigate('venueLayout'); }}
           onViewProfile={handleViewProfile}
           onAddVenue={handleAddVenue}
           onEditVenue={handleEditVenue}
           onDeleteVenue={handleDeleteVenue}
-          onBack={() => setCurrentView('home')}
+          onBack={() => navigate('home')}
           onVenuesLoaded={(v) => setVenues(v)}
         />
       )}
@@ -755,7 +742,7 @@ function AppContent() {
       )}
 
       {currentView === 'venueLayout' && selectedVenue && (
-        <VenueLayout venue={selectedVenue} onBack={() => setCurrentView('venues')} />
+        <VenueLayout venue={selectedVenue} onBack={() => navigate('venues')} />
       )}
 
 
