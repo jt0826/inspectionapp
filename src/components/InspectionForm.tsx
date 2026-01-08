@@ -6,6 +6,7 @@ import type { Inspection, InspectionItem } from '../types/inspection';
 import { useAuth, useDisplayName } from '../contexts/AuthContext';
 import { getInspectionItems, getInspections } from '../utils/inspectionApi';
 import { API } from '../config/api';
+import { listImages, signUpload, registerImage } from '../utils/imageApi';
 import { generatePhotoId, generateItemId, generateInspectionId } from '../utils/id';
 import { useToast } from './ToastProvider';
 import LoadingOverlay from './LoadingOverlay';
@@ -243,18 +244,8 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
             setInspectionItems(mapped);
             (async () => {
               try {
-                const resp = await fetch(API.listImagesDb, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ inspectionId: inspectionId, roomId: room.id, signed: true })
-                });
-                if (!resp.ok) {
-                  console.warn('Failed to fetch images from DB:', resp.status);
-                  return;
-                }
-                const data = await resp.json();
-                const images: any[] = data.images || [];
-                if (images.length === 0) return;
+                const images: any[] = await listImages({ inspectionId: inspectionId, roomId: room.id, signed: true });
+                if (!images || images.length === 0) return;
 
                 // Merge images into corresponding items by itemId
                 setInspectionItems((prev) => {
@@ -324,22 +315,16 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
               updateItem(it.id, { photos: updatedPhotos });
 
               // request signed url
-              const signResp = await fetch(API.signUpload, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  inspectionId: inspId,
-                  venueId: venue.id,
-                  roomId: room.id,
-                  itemId: it.id,
-                  filename: p.filename,
-                  contentType: p.contentType,
-                  fileSize: p.filesize,
-                  uploadedBy: (user && user.name) || 'unknown'
-                })
+              const signData = await signUpload({
+                inspectionId: inspId,
+                venueId: venue.id,
+                roomId: room.id,
+                itemId: it.id,
+                filename: p.filename,
+                contentType: p.contentType,
+                fileSize: p.filesize,
+                uploadedBy: (user && user.name) || 'unknown'
               });
-              if (!signResp.ok) throw new Error('Failed to obtain signed URL');
-              const signData = await signResp.json();
               const key = signData.key;
 
               // POST using presigned form if provided (avoids preflight)
@@ -367,24 +352,18 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
               await new Promise(resolve => setTimeout(resolve, 500)); // slight delay to ensure S3 consistency
 
               // register metadata
-              const registerResp = await fetch(API.registerImage, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  key,
-                  imageId: p.id,
-                  inspectionId: inspId,
-                  venueId: venue.id,
-                  roomId: room.id,
-                  itemId: it.id,
-                  filename: p.filename,
-                  contentType: p.contentType,
-                  filesize: p.filesize,
-                  uploadedBy: (user && user.name) || 'unknown'
-                })
+              const reg = await registerImage({
+                key,
+                imageId: p.id,
+                inspectionId: inspId,
+                venueId: venue.id,
+                roomId: room.id,
+                itemId: it.id,
+                filename: p.filename,
+                contentType: p.contentType,
+                filesize: p.filesize,
+                uploadedBy: (user && user.name) || 'unknown'
               });
-              if (!registerResp.ok) throw new Error('Failed to register image');
-              const reg = await registerResp.json();
 
               // replace photo entry with registered metadata
               // Preserve local blob preview (p.preview) when server does not return a preview URL

@@ -90,6 +90,24 @@ export function useInspections() {
   }, []);
 
   /**
+   * setVenueForCurrentInspection(venue)
+   * - Update the current inspection with venue details (venueId, venueName) and mark in-progress
+   */
+  const setVenueForCurrentInspection = useCallback((venue: { id: string; name: string }) => {
+    if (!venue) return;
+    setInspections(prev => prev.map(insp => (insp.id === currentInspectionId ? { ...insp, venueId: venue.id, venueName: venue.name, status: (insp.status || 'in-progress') } : insp)));
+  }, [currentInspectionId]);
+
+  /**
+   * setRoomForCurrentInspection(room)
+   * - Update the current inspection with room details (roomId, roomName)
+   */
+  const setRoomForCurrentInspection = useCallback((room: { id: string; name: string }) => {
+    if (!room) return;
+    setInspections(prev => prev.map(insp => (insp.id === currentInspectionId ? { ...insp, roomId: room.id, roomName: room.name } : insp)));
+  }, [currentInspectionId]);
+
+  /**
    * deleteInspection(id)
    * - Remove the inspection from local state. If the deleted inspection was selected,
    *   clear the selection.
@@ -114,6 +132,8 @@ export function useInspections() {
     isCreating,
     createInspection,
     updateInspection,
+    setVenueForCurrentInspection,
+    setRoomForCurrentInspection,
     deleteInspection,
     selectInspection,
     setInspections,

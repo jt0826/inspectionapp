@@ -321,3 +321,17 @@ export async function getInspectionItems(inspectionId: string) {
     return null;
   }
 }
+
+export async function getInspectionItemsForRoom(inspectionId: string, roomId?: string) {
+  try {
+    const items = await getInspectionItems(inspectionId);
+    if (!items || !Array.isArray(items)) return [];
+    if (roomId) {
+      return (items as any[]).filter((it) => String(it.roomId || it.room_id || it.room || '') === String(roomId));
+    }
+    return items;
+  } catch (e) {
+    console.warn('getInspectionItemsForRoom failed', e);
+    return [];
+  }
+}

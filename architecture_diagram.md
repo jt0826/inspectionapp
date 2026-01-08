@@ -71,14 +71,13 @@
           ┌───────────────────────────────┼───────────────────────────────┐
           │                               │                               │
           ▼                               ▼                               ▼
-┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
-│     AuthProvider    │     │    ToastProvider    │     │      API Config     │
-│  (AuthContext.tsx)  │     │  (Notifications)    │     │   (src/config/api)  │
-│                     │     │                     │     │                     │
-│  • User state       │     │  • Success/Error    │     │  • API endpoints    │
-│  • Login/Logout     │     │  • Toast display    │     │  • Base URL         │
-│  • localStorage     │     │                     │     │                     │
-└─────────────────────┘     └─────────────────────┘     └─────────────────────┘
+┌─────────────────────┐   ┌─────────────────────┐   ┌─────────────────────┐   ┌─────────────────────┐
+│     AuthProvider    │   │    ToastProvider    │   │  InspectionProvider │   │     VenueProvider   │
+│  (AuthContext.tsx)  │   │  (Notifications)    │   │ (InspectionContext) │   │  (VenueContext.tsx) │
+│  • User state       │   │  • Success/Error    │   │  • refreshKey       │   │  • venues state     │
+│  • Login/Logout     │   │  • Toast display    │   │  • triggerRefresh() │   │  • triggerRefresh() │
+│  • localStorage     │   │                     │   │                     │   │                     │
+└─────────────────────┘   └─────────────────────┘   └─────────────────────┘   └─────────────────────┘
 
 ┌───────────────────────────────────────────────────────────────────────────────────────┐
 │                                    VIEW COMPONENTS                                    │
@@ -95,6 +94,8 @@
 │  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐   ┌──────────────┐           │
 │  │  VenueList   │   │   RoomList   │   │VenueSelection│   │  VenueForm   │           │
 │  │              │   │              │   │              │   │              │           │
+│  │ • Uses `VenueContext` & `InspectionContext` to compute per-venue counts and load rooms │           │
+│  │ • No more `window.dispatchEvent` listeners; contexts provide `refreshKey` triggers    │           │
 │  │ • All venues │   │ • Rooms in   │   │ • Pick venue │   │ • Create/Edit│           │
 │  │ • CRUD ops   │   │   venue      │   │ for inspect  │   │   venue      │           │
 │  └──────────────┘   └──────────────┘   └──────────────┘   └──────────────┘           │
@@ -104,7 +105,7 @@
 │  │              │   │ Confirmation │   │   History    │   │              │           │
 │  │ • Item list  │   │              │   │              │   │ • Summary    │           │
 │  │ • Pass/Fail  │   │ • Pre-save   │   │ • Past insp  │   │ • Status     │           │
-│  │ • Photos     │   │   review     │   │ • Details    │   │ • Actions    │           │
+│  │ • Photos (handled via `src/utils/imageApi.ts` – uses `sign_upload` + `register_image`)│   │ • Details    │   │ • Actions    │           │
 │  │ • Notes      │   └──────────────┘   └──────────────┘   └──────────────┘           │
 │  │ • Auto-save  │                                                                    │
 │  └──────────────┘                                                                    │
@@ -379,7 +380,7 @@ User object stored in localStorage persists across sessions
        │ 4. 204 Success                               │             │              │
        │◀─────────────────────────────────────────────┤             │              │
        │               │                 │             │             │              │
-       │ 5. Register image in DB         │             │             │              │
+       │ 5. Register image in DB (register_image)│    │             │              │
        ├─────────────────────────────────▶             │             │              │
        │               │                 │             │             │              │
        │               │  6. head_object │             │             │              │
@@ -397,6 +398,8 @@ User object stored in localStorage persists across sessions
        │               │                 │             │             │              │
        │ 10. {images: [..., signedUrl]}  │             │             │              │
        │◀──────────────────────────────────────────────────────────────────────────│
+
+> Note: The frontend delegates image operations to `src/utils/imageApi.ts` and uses the `sign_upload` + `register_image` endpoints; image list responses return CloudFront-signed URLs when available. Unit tests were added for the image helpers (`imageApi`) to validate behavior.
 
 S3 Bucket: inspectionappimages
 Key Format: images/{inspectionId}/{venueId}/{roomId}/{itemId}/{timestamp}-{uuid}.{ext}

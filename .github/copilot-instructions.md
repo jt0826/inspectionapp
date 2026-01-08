@@ -10,6 +10,13 @@ Frontend (TypeScript) → API Gateway → Lambda (Python) → DynamoDB
                                     ↘ S3 (images via presigned POST)
 ```
 
+### Documentation References (Very Important. Please do not skip these and make sure to update them as needed)
+- [Architecture Diagram](./architecture_diagram.md) - Visual overview of components and data flow
+- [Refactor Plan](./refactor_plan.md) - Rationale and steps for recent codebase improvements
+- [API info](./src/config/api.ts) - Centralized API endpoint definitions - comments are inlined
+- As needed, refer to individual file comments and docstrings for implementation details.
+- [VERY IMPORTANT - PLEASE READ] Before and after writing any code, please refer to the above documents to ensure alignment with architecture and conventions. If working on the refactor plan, please follow the outlined steps closely, and update which sections have been completed. If there are any significant changes to architechture, please update the architecture diagram as well. Please clarify if there are any ambiguities.
+
 ### DynamoDB Tables
 - `InspectionMetadata` - inspection headers (PK: `inspectionId`)
 - `InspectionItems` - per-item records (PK: `inspectionId`, SK: `roomId#itemId`)

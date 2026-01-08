@@ -9,7 +9,7 @@ import { InspectionHistory } from './components/InspectionHistory';
 import { VenueForm } from './components/VenueForm';
 import { UserProfile } from './components/UserProfile';
 import { InspectorHome } from './components/InspectorHome';
-import { getInspectionItems } from './utils/inspectionApi';
+import { getInspectionItemsForRoom } from './utils/inspectionApi';
 import { VenueSelection } from './components/VenueSelection';
 import { InspectionConfirmation } from './components/InspectionConfirmation';
 import { VenueLayout } from './components/VenueLayout';
@@ -103,7 +103,7 @@ function AppContent() {
   // moved to useVenues
   // const [selectedVenue, setSelectedVenue] = useState<Venue | null>(null);
   // const [selectedRoom, setSelectedRoom] = useState<Room | null>(null);
-  const { inspections, currentInspectionId, isCreating, createInspection, updateInspection, deleteInspection, selectInspection, setInspections } = useInspections();
+  const { inspections, currentInspectionId, isCreating, createInspection, updateInspection, setVenueForCurrentInspection, setRoomForCurrentInspection, deleteInspection, selectInspection, setInspections } = useInspections();
   // pendingVenueId handled by useVenues
 
   // NOTE: Database-sourced inspections are now fetched by `InspectorHome` to avoid duplicate network calls.
@@ -127,11 +127,7 @@ function AppContent() {
 
     // If we have a current inspection (ongoing), update it with venue info
     if (currentInspectionId) {
-      setInspections(inspections.map(insp => 
-        insp.id === currentInspectionId 
-          ? { ...insp, venueId: venue.id, venueName: venue.name, status: 'in-progress' as const }
-          : insp
-      ));
+      setVenueForCurrentInspection(venue);
 
       // Do NOT persist venue/room selections automatically. Saving should only occur when the user
       // explicitly presses the "Save" button in the Inspection form (server-authoritative saves).
@@ -159,11 +155,7 @@ function AppContent() {
       }
 
       // Update local state optimistically only when the room actually changes
-      setInspections(inspections.map(insp => 
-        ((insp as any).id === currentInspectionId || (insp as any).inspection_id === currentInspectionId || (insp as any).inspectionId === currentInspectionId)
-          ? { ...insp, roomId: room.id, roomName: room.name }
-          : insp
-      ));
+      setRoomForCurrentInspection(room);
 
       // Do NOT persist venue/room selections automatically. Saving should only occur when the user
       // explicitly presses the "Save" button in the Inspection form (server-authoritative saves).
@@ -294,12 +286,9 @@ function AppContent() {
   };
   const fetchInspectionItems = async (inspectionId: string, roomId?: string) => {
     try {
-      const items = await getInspectionItems(inspectionId);
-      if (!items) return [];
-      if (roomId) {
-        return (items as any[]).filter((it) => String(it.roomId || it.room_id || it.room || '') === String(roomId));
-      }
-      return items;
+      // Delegate to inspectionApi helper
+      const items = await getInspectionItemsForRoom(inspectionId, roomId);
+      return items || [];
     } catch (e) {
       console.warn('Failed to fetch inspection items:', e);
       return [];
@@ -324,22 +313,23 @@ function AppContent() {
               fetchInspectionItems(inspectionOrId, room.id).then((items) => {
                 if (items && items.length > 0) {
                   const mapped = items.map((it: any) => {
-                    const id = it.itemId || it.item || it.ItemId || generateItemId();
-                    const name = it.itemName || it.item || it.ItemName || '';
-                    return { id, name, status: it.status, notes: it.comments || '' };
-                  });
-                  setEditingInspection({ ...inspection, items: mapped });
+                const id = it.itemId || it.item || it.ItemId || generateItemId();
+                const name = it.itemName || it.item || it.ItemName || '';
+                return { id, name, status: it.status, notes: it.comments || '', photos: it.photos || [] };
+              });
 
-                  // Upsert into local inspections state so UI (RoomList) can reflect progress
-                  setInspections(prev => {
-                    const existing = prev.find(p => p.id === inspectionOrId);
-                    if (existing) {
-                      return prev.map(p => p.id === inspectionOrId ? { ...p, items: mapped } : p);
-                    }
-                    return [...prev, { ...inspection, items: mapped }];
-                  });
+              setEditingInspection({ ...inspection, items: mapped });
+
+              // Upsert into local inspections state so UI (RoomList) can reflect progress
+              setInspections(prev => {
+                const existing = prev.find(p => p.id === inspectionOrId);
+                if (existing) {
+                  return prev.map(p => p.id === inspectionOrId ? { ...p, items: mapped } : p);
                 }
-              }).catch(() => {});
+                return [...prev, { ...(inspection as any), items: mapped }];
+              });
+            }
+          }).catch(() => {});
               navigate('inspection');
               return;
             }
@@ -398,7 +388,7 @@ function AppContent() {
               const mapped = items.map((it: any) => {
                 const id = it.itemId || it.item || it.ItemId || generateItemId();
                 const name = it.itemName || it.item || it.ItemName || '';
-                return { id, name, status: it.status, notes: it.comments || '' };
+                return { id, name, status: it.status, notes: it.comments || '', photos: it.photos || [] };
               });
               setEditingInspection({ ...simpleInspection, items: mapped });
             }

@@ -25,7 +25,7 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
   const [creating, setCreating] = useState(false);
   const [loadingVenues, setLoadingVenues] = useState<boolean>(false);
   const displayName = useDisplayName();
-  const { triggerRefresh } = useInspectionContext();
+  const { triggerRefresh, createInspection } = useInspectionContext();
 
   // If parent didn't provide venues, load them on mount so selection is available
 
@@ -68,53 +68,20 @@ export function VenueSelection({ venues, onVenueSelect, onBack, currentInspectio
       return;
     }
 
-    // No draft exists: create a new inspection
-    const inspectionId = generateInspectionId(); // Generate a unique inspection ID
-    const payload = {
-      action: 'create_inspection',
-      inspection: {
-        inspection_id: inspectionId,
-        createdBy: displayName,
-        updatedBy: displayName,
-        venueId: selectedVenue?.id,
-        venueName: selectedVenue?.name,
-        status: 'in-progress',
-      }
-    };
-
     try {
       setCreating(true);
-      {/* IMPORTANT: call the new inspections-create resource to create an inspection */}
-      const response = await fetch(API.inspectionsCreate, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
+      // use the context-provided createInspection helper to ensure consistent behavior
+      const created = await createInspection({ venueId: selectedVenue.id, venueName: selectedVenue.name, createdBy: displayName });
 
-      if (response.ok) {
-        console.log('Inspection created successfully');
-        let data: any = null;
-        try { data = await response.json(); } catch (_) { data = null; }
-        let body = data && data.body ? (typeof data.body === 'string' ? JSON.parse(data.body) : data.body) : data;
-        const created = body?.inspectionData || body?.inspection || body;
-        if (typeof onInspectionCreated === 'function') {
-          // Debug: log server-returned created object and current selectedVenue
-          console.debug('VenueSelection: create response created=', created, 'selectedVenue=', selectedVenue);
-          // Pass the created inspection and the selectedVenue so the parent can optimistically show venue details
-          onInspectionCreated(created || { inspection_id: inspectionId, venueId: selectedVenue?.id, venueName: selectedVenue?.name, venue_name: selectedVenue?.name, status: 'in-progress' }, selectedVenue);
-        }
-        // After creating an inspection on the server, notify app-wide consumers that
-        // inspection lists have changed via `triggerRefresh()`. This avoids using
-        // global DOM events and keeps update flow explicit to React components.
-        try {
-          triggerRefresh?.();
-        } catch (e) { /* ignore */ }      } else {
-        console.error('Failed to create inspection');
+      if (typeof onInspectionCreated === 'function') {
+        // Pass the created inspection and the selectedVenue so the parent can optimistically show venue details
+        onInspectionCreated(created, selectedVenue);
       }
+
+      // Notify app-wide consumers that inspection lists have changed via `triggerRefresh()`
+      try { triggerRefresh?.(); } catch (e) { /* ignore */ }
     } catch (error) {
-      console.error('Error creating inspection:', error);
+      console.error('Error creating inspection via createInspection helper:', error);
     } finally {
       setCreating(false);
     }

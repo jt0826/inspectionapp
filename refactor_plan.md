@@ -1,10 +1,15 @@
 # 🛠️ Actionable Refactoring Checklist
 
+**Status update (2026-01-08):**
+- Major refactor steps completed: navigation, inspections, venues extraction into hooks; `InspectionContext` implemented and wired; `VenueContext` implemented and wired; replaced global `window` events with context-driven refreshes; updated UI for loading states (VenueSelection, delete confirmation computing). Builds pass and docs were added (`docs/inspection-context.md`, `docs/venue-context.md`).
+- Phase 5.1 is now implemented: image upload handling extracted into `src/utils/imageApi.ts`, image list/sign/register flows replaced inline calls, venue/room persist logic moved into `useInspections`, and `getInspectionItemsForRoom` added to `inspectionApi`. Loading overlays were verified and `VenueSelection` now uses the inspection creation helper from context. Vitest tests were added for `imageApi` and `inspectionApi` and pass locally.
+- Next priorities: add unit tests for contexts/hooks (high priority), split `InspectionForm` into subcomponents (Phase 5.2), implement client-side idempotency keys for saves/uploads (Phase 6), and prepare a PR for review.
+
 This checklist is organized by priority and includes specific file references, line numbers, and implementation guidance.
 
 ---
 
-## Phase 1: Configuration & Infrastructure (Do First)
+## Phase 1: Configuration & Infrastructure (Do First) Completed ✅
 
 ### 1.1 Create Centralized API Configuration
 
@@ -92,7 +97,7 @@ export const generatePhotoId = () => generateId('photo');
 
 ---
 
-## Phase 2: Type System & Data Normalization
+## Phase 2: Type System & Data Normalization Completed ✅
 
 ### 2.1 Create Canonical Type Definitions
 
@@ -261,7 +266,7 @@ function normalizeStatus(s: any): 'draft' | 'in-progress' | 'completed' | 'pendi
 
 ---
 
-## Phase 3: Break Up App.tsx (Most Important Refactor)
+## Phase 3: Break Up App.tsx (Most Important Refactor) Completed ✅
 
 ### 3.1 Extract Navigation State Machine
 
@@ -322,7 +327,7 @@ export function useNavigation() {
 
 ---
 
-### 3.2 Extract Inspection State Management
+### 3.2 Extract Inspection State Management 
 
 **Create new file:** `src/hooks/useInspections.ts`
 
@@ -518,11 +523,30 @@ useEffect(() => {
 
 ---
 
-## Phase 4: Replace Window Events with Context (Detailed) ✅
+## Phase 4: Replace Window Events with Context (Completed) ✅
 
 **Goal**
 - Replace brittle global DOM events (`window.dispatchEvent` / `window.addEventListener`) used for cross-component refresh with a React-first **InspectionContext** provider that exposes state, helpers and an explicit refresh trigger.
 
+**What we implemented**
+- `src/contexts/InspectionContext.tsx` — provider + `useInspectionContext()` exposing `refreshKey`, `triggerRefresh`, and `lastLoadedInspections`.
+- Replaced writer-side global dispatches with context triggers:
+  - `InspectionForm.tsx`, `VenueSelection.tsx` now call `triggerRefresh()` after successful operations.
+  - `inspectionApi.deleteInspection()` no longer dispatches DOM events — it returns a result and callers invoke `triggerRefresh()` as appropriate.
+- Replaced listener-side global event handling:
+  - `InspectorHome.tsx` now re-fetches when `refreshKey` changes and publishes `lastLoadedInspections`.
+  - `RoomList.tsx` and `InspectionHistory.tsx` re-run their loads on `refreshKey` and/or `lastLoadedInspections`.
+  - `VenueList.tsx` consumes `lastLoadedInspections` snapshot instead of listening for `inspectionsLoaded`.
+- Added docs: `docs/inspection-context.md` (usage, testing, migration notes).
+
+**Additional improvements done as part of the Phase**
+- Implemented `VenueContext` (`src/contexts/VenueContext.tsx`) and `useVenueContext()` to centralize venue state and provide a `triggerRefresh()` for venue-level changes.
+- Added `docs/venue-context.md` describing usage and testing guidance.
+- Replaced window-based event coupling throughout the codebase with explicit context APIs — this simplifies testing and reasoning about global refresh behavior.
+
+**Status / Next steps**
+- Unit tests for `InspectionContext` and `VenueContext` are pending (high priority).
+- Continue Phase 5 (component splits) and Phase 6 (idempotency) per plan.
 Why this matters
 - Global events are hard to reason about, hard to test, and create implicit coupling between modules. A context-based refresh keeps reactivity explicit, type-safe, and testable. 🔧
 
@@ -592,14 +616,27 @@ Next steps (follow-up work) ➕
 
 ## Phase 5: Specific Function Relocations
 
-### 5.1 Move API Calls Out of Components
+### 5.1 Move API Calls Out of Components (Completed)
+
+**Recent UX change implemented (verified):**
+- Loading overlays added for long-running operations:
+  - `VenueSelection` shows a `LoadingOverlay` while fetching venues (`Loading venues…`).
+  - `InspectorHome` shows a `Checking linked images…` overlay while calculating deletion impact (image counts) before the delete confirmation, and a `Deleting…` overlay while performing the deletion itself.
+- These changes improve responsiveness and prevent click-through while async computations are in progress.
+
+**What was implemented:**
+- Extracted image upload/list/register logic into `src/utils/imageApi.ts`. `InspectionForm.tsx` now uses `listImages`, `signUpload`, and `registerImage` helpers instead of inline `fetch()` calls.
+- Moved venue/room persist logic out of `App.tsx` into the `useInspections` hook (`setVenueForCurrentInspection`, `setRoomForCurrentInspection`) to avoid API calls in event handlers.
+- Consolidated inspection item fetching into `inspectionApi` (`getInspectionItemsForRoom`) and updated callers to use it.
+- `VenueSelection` now uses the context-provided `createInspection` helper and calls `triggerRefresh()` after successful creates.
+- Added Vitest unit tests for `imageApi` and `inspectionApi` (tests added under `src/utils/__tests__`) and verified they pass locally.
 
 | Function | Current Location | New Location | Reason |
 | --- | --- | --- | --- |
-| Venue persist on selection | App.tsx | `useInspections.updateVenue()` | API calls shouldn't be in event handlers |
-| Room persist on selection | App.tsx | `useInspections.updateRoom()` | Same |
-| `fetchInspectionItems` | App.tsx | inspectionApi.ts | Already exists there, remove duplicate |
-| Image fetching | InspectionForm.tsx | `src/utils/imageApi.ts` (new) | Separate concerns |
+| Venue persist on selection | App.tsx | `useInspections.setVenueForCurrentInspection()` | Prevent API calls in event handlers; use hook helpers |
+| Room persist on selection | App.tsx | `useInspections.setRoomForCurrentInspection()` | Same |
+| `fetchInspectionItems` | App.tsx | `inspectionApi.getInspectionItemsForRoom()` | Centralized helper |
+| Image fetching & upload | InspectionForm.tsx | `src/utils/imageApi.ts` (new) | Separate concerns, easier to test |
 
 ---
 
