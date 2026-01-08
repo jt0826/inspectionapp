@@ -105,7 +105,8 @@
 │  │              │   │ Confirmation │   │   History    │   │              │           │
 │  │ • Item list  │   │              │   │              │   │ • Summary    │           │
 │  │ • Pass/Fail  │   │ • Pre-save   │   │ • Past insp  │   │ • Status     │           │
-│  │ • Photos (handled via `src/utils/imageApi.ts` – uses `sign_upload` + `register_image`)│   │ • Details    │   │ • Actions    │           │
+│  │ • Photos (handled via `src/utils/imageApi.ts` – uses `sign_upload` + `register_image`)│
+│  │ • The `InspectionForm` has been split into subcomponents: `InspectionHeader`, `InspectionProgress`, `InspectionItemCard`, `PhotoGrid`, and `Lightbox`. Header/Progress unit tests were added and pass; test harness is Vitest + React Testing Library running in a `jsdom` environment.│   │ • Details    │   │ • Actions    │           │
 │  │ • Notes      │   └──────────────┘   └──────────────┘   └──────────────┘           │
 │  │ • Auto-save  │                                                                    │
 │  └──────────────┘                                                                    │

@@ -1,5 +1,10 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { ArrowLeft, CheckCircle2, XCircle, MinusCircle, Save, Camera, X, Search, ChevronLeft, ChevronRight, Clock } from 'lucide-react';
+import { ArrowLeft, X, Search, ChevronLeft, ChevronRight, Clock, Save } from 'lucide-react';
+// Split components (Phase 5.2)
+import InspectionHeader from './inspection/InspectionHeader';
+import InspectionProgress from './inspection/InspectionProgress';
+import InspectionItemCard from './inspection/InspectionItemCard';
+import Lightbox from './inspection/Lightbox';
 import NumberFlow from '@number-flow/react';
 import type { Venue, Room } from '../types/venue';
 import type { Inspection, InspectionItem } from '../types/inspection';
@@ -608,58 +613,23 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
     <div className="min-h-screen bg-white pb-24 lg:pb-32">
       <LoadingOverlay visible={saving || loadingSaved} message={loadingSaved ? 'Loading…' : 'Saving…'} />
       <div className="max-w-5xl mx-auto">
-        {/* Header */}
-        <div className="bg-blue-600 text-white p-6 lg:p-8 pb-8 lg:pb-10 sticky top-0 z-10">
-          <button onClick={onBack} className="flex items-center gap-2 text-blue-100 hover:text-white mb-4">
-            <ArrowLeft className="w-5 h-5" />
-            <span>Back to Rooms</span>
-          </button>
-          <h1 className="mb-1">{room.name}</h1>
-          <p className="text-blue-100 text-sm">
-            {venue.name} • {room.items?.length || 0} items
-          </p>
-          {existingInspection && (
-            <p className="text-blue-200 text-sm mt-1">
-              {isReadOnly ? 'Completed inspection (read-only)' : (existingInspection.items.every(i => i.status === null || defaultInspectionItems.find(t => t.id === i.id)?.name !== i.name)
-                ? 'Re-inspection (Failed Items Only)'
-                : 'Editing existing inspection')}
-            </p>
-          )}
-        </div>
+        <InspectionHeader
+          roomName={room.name}
+          venueName={venue.name}
+          itemsCount={room.items?.length || 0}
+          existingInspection={existingInspection}
+          isReadOnly={isReadOnly}
+          onBack={onBack}
+        />
 
-        {/* Progress Stats */}
-        <div className="p-4 bg-gray-50 border-b sticky top-0 lg:top-[140px] z-10">
-          <div className="flex items-center justify-between text-sm mb-2">
-            <span className="text-gray-700">Progress</span>
-            <span className="text-gray-900">
-              <NumberFlow value={completedCount ?? null} className="inline-block" /> / <NumberFlow value={inspectionItems.length ?? null} className="inline-block" />
-            </span>
-          </div>
-          <div className="w-full bg-gray-200 rounded-full h-2 mb-3">
-            <div
-              className="bg-blue-500 h-2 rounded-full transition-all"
-              style={{ width: `${(completedCount / inspectionItems.length) * 100}%` }}
-            />
-          </div>
-          <div className="flex gap-4 text-sm">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-green-600" />
-              <span className="text-gray-700">Pass: <NumberFlow value={passCount ?? null} className="inline-block" /></span>
-            </div>
-            <div className="flex items-center gap-2">
-              <XCircle className="w-4 h-4 text-red-600" />
-              <span className="text-gray-700">Fail: <NumberFlow value={failCount ?? null} className="inline-block" /></span>
-            </div>
-            <div className="flex items-center gap-2">
-              <MinusCircle className="w-4 h-4 text-gray-600" />
-              <span className="text-gray-700">N/A: <NumberFlow value={naCount ?? null} className="inline-block" /></span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4 text-yellow-600" />
-              <span className="text-gray-500 text-sm">Pending: <NumberFlow value={pendingCount ?? null} className="inline-block" /></span>
-            </div>
-          </div>
-        </div>
+        <InspectionProgress
+          completedCount={completedCount}
+          totalCount={inspectionItems.length}
+          passCount={passCount}
+          failCount={failCount}
+          naCount={naCount}
+          pendingCount={pendingCount}
+        />
 
         {/* Inspection Items */}
         <div className="p-4">
@@ -693,169 +663,19 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
           </div>
 
           {filteredItems.map((item) => (
-                    <div key={item.id} className="border border-gray-200 rounded-lg p-4 mb-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <p className="text-gray-900 mr-2">{debouncedQuery ? highlightMatch(item.name || '', debouncedQuery) : item.name}</p>
-                        {item.status === 'pending' && <span className="text-xs text-gray-500">Pending</span>}
-                      </div>
-
-                      {/* Status Buttons */}
-                      <div className="flex gap-2 mb-3">
-                        <button
-                        onClick={() => { if (!isReadOnly && !isBusy) updateItem(item.id, { status: 'pass' }); }}
-                        disabled={isReadOnly || isBusy}
-                        className={`flex-1 py-2 px-3 rounded-lg border transition-colors flex items-center justify-center gap-2 ${
-                          item.status === 'pass'
-                            ? 'bg-green-500 text-white border-green-600'
-                            : 'bg-white text-gray-700 border-gray-300 hover:border-green-500'
-                        } ${isReadOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
-                        >
-                          <CheckCircle2 className="w-4 h-4" />
-                          <span>Pass</span>
-                        </button>
-                        <button
-                          onClick={() => { if (!isReadOnly && !isBusy) updateItem(item.id, { status: 'fail' }); }}
-                          disabled={isReadOnly || isBusy}
-                          className={`flex-1 py-2 px-3 rounded-lg border transition-colors flex items-center justify-center gap-2 ${
-                            item.status === 'fail'
-                              ? 'bg-red-500 text-white border-red-600'
-                              : 'bg-white text-gray-700 border-gray-300 hover:border-red-500'
-                          } ${isReadOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
-                        >
-                          <XCircle className="w-4 h-4" />
-                          <span>Fail</span>
-                        </button>
-                        <button
-                          onClick={() => { if (!isReadOnly && !isBusy) updateItem(item.id, { status: 'na' }); }}
-                          disabled={isReadOnly || isBusy}
-                          className={`flex-1 py-2 px-3 rounded-lg border transition-colors flex items-center justify-center gap-2 ${
-                            item.status === 'na'
-                              ? 'bg-gray-500 text-white border-gray-600'
-                              : 'bg-white text-gray-700 border-gray-300 hover:border-gray-500'
-                          } ${isReadOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
-                        >
-                          <MinusCircle className="w-4 h-4" />
-                          <span>N/A</span>
-                        </button>
-                      </div>
-
-                      {/* Notes */}
-                      <textarea
-                        value={item.notes}
-                        onChange={(e) => { if (!isReadOnly) updateItem(item.id, { notes: e.target.value }); }}
-                        placeholder="Add notes (optional)"
-                        className={`w-full p-2 border border-gray-300 rounded text-sm resize-none ${isReadOnly ? 'bg-gray-100 text-gray-600' : 'focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900'}`}
-                        rows={2}
-                        readOnly={isReadOnly || isBusy}
-                      />
-
-                      {/* Photo Upload */}
-                      <div className="mt-3">
-                        <label className="flex items-center gap-2 text-gray-700 text-sm mb-2">
-                          <Camera className="w-4 h-4" />
-                          <span>Add Photos</span>
-                        </label>
-                        
-                        {/* Photo Grid */}
-                        {item.photos.length > 0 && (
-                          <div className="grid grid-cols-3 gap-2 mb-2">
-                            {item.photos.map((photo: any, photoIndex: number) => {
-                              // Show local blob previews for newly selected files, otherwise use CloudFront-signed URL
-                              let src: string | null = null;
-                              if (typeof photo === 'string') {
-                                src = photo;
-                              } else if (photo && (photo.file || (photo.preview && typeof photo.preview === 'string' && photo.preview.startsWith('blob:')))) {
-                                src = photo.preview;
-                              } else {
-                                // DB-provided images may have `preview` set to a signed URL (or cloudfrontSignedUrl)
-                                src = (photo && photo.preview) || photo?.cloudfrontSignedUrl || null;
-                              }
-                              if (!src) return null;
-                              const photoKey = photo?.imageId ? `img_${photo.imageId}` : (photo?.id ? `img_${photo.id}` : `img_${photoIndex}`);
-                              return (
-                                <div key={photoKey} className="relative group">
-                                  <img
-                                    src={src}
-                                    alt={`Evidence ${photoIndex + 1}`}
-                                    width={80}
-                                    height={80}
-                                    onClick={() => {
-                                      const imgs = (item.photos || []).map((p: any) => {
-                                        if (typeof p === 'string') return p;
-                                        if (p && (p.file || (p.preview && typeof p.preview === 'string' && p.preview.startsWith('blob:')))) return p.preview;
-                                        // prefer preview (may contain signed URL) then cloudfrontSignedUrl
-                                        return p.preview || p.cloudfrontSignedUrl || null;
-                                      }).filter(Boolean);
-                                      openLightbox(imgs, imgs.indexOf(src));
-                                    }}
-                                    role="button"
-                                    tabIndex={0}
-                                    onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { const imgs = (item.photos || []).map((p: any) => { if (typeof p === 'string') return p; if (p && (p.file || (p.preview && typeof p.preview === 'string' && p.preview.startsWith('blob:')))) return p.preview; return p.preview || p.cloudfrontSignedUrl || null; }).filter(Boolean); openLightbox(imgs, imgs.indexOf(src)); } }}
-                                    className="cursor-pointer w-full h-20 object-contain object-center rounded border border-gray-300 bg-gray-100 p-0.5"
-                                  />
-                                  {!isReadOnly && (
-                                    <button
-                                      type="button"
-                                      aria-label="Remove photo"
-                                      onClick={() => removePhoto(item.id, photoIndex)}
-                                      disabled={isReadOnly || isBusy}
-                                      className="absolute top-2 right-2 bg-red-600 text-white rounded-full p-2 shadow-md focus:outline-none touch-manipulation disabled:opacity-60 disabled:cursor-not-allowed"
-                                    >
-                                      <X className="w-3 h-3" />
-                                    </button>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                        
-                        {/* Upload Button (hidden in read-only) */}
-                        {!isReadOnly && !isBusy && (
-                          <div className="flex items-center gap-2">
-                            {/* Take Photo (camera capture) */}
-                            <label className={`flex items-center justify-center gap-2 py-2 px-3 border-2 border-dashed border-gray-300 rounded-lg ${isReadOnly ? 'opacity-70 cursor-not-allowed' : 'hover:border-blue-500 hover:bg-blue-50'} transition-colors cursor-pointer text-sm text-gray-600`}>
-                              <Camera className="w-4 h-4" />
-                              <span>Take Photo</span>
-                              <input
-                                type="file"
-                                accept="image/*"
-                                capture="environment"
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  if (file) {
-                                    handlePhotoUpload(item.id, file);
-                                    e.target.value = '';
-                                  }
-                                }}
-                                className="hidden"
-                                aria-label={`Take photo for ${item.name}`}
-                              />
-                            </label>
-
-                            {/* Choose existing photo from library */}
-                            <label className="flex items-center justify-center gap-2 py-2 px-3 border-2 border-dashed border-gray-300 rounded-lg hover:border-blue-500 hover:bg-blue-50 transition-colors cursor-pointer text-sm text-gray-600">
-                              <Camera className="w-4 h-4" />
-                              <span>Choose from Library</span>
-                              <input
-                                type="file"
-                                accept="image/*"
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  if (file) {
-                                    handlePhotoUpload(item.id, file);
-                                    e.target.value = '';
-                                  }
-                                }}
-                                className="hidden"
-                                aria-label={`Choose photo for ${item.name}`}
-                              />
-                            </label>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
+            <InspectionItemCard
+              key={item.id}
+              item={item}
+              debouncedQuery={debouncedQuery}
+              highlightMatch={highlightMatch}
+              isReadOnly={isReadOnly}
+              isBusy={isBusy}
+              updateItem={updateItem}
+              removePhoto={removePhoto}
+              handlePhotoUpload={handlePhotoUpload}
+              openLightbox={openLightbox}
+            />
+          ))}
         </div>
 
         {/* Fixed Bottom Button (hidden in read-only) */}
@@ -879,37 +699,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
 
       </div>
 
-      {/* Lightbox Modal */}
-      {lightboxOpen && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70"
-          role="dialog"
-          aria-modal="true"
-          onClick={() => closeLightbox()}
-        >
-          <div className="absolute top-4 right-4">
-            <button onClick={() => closeLightbox()} aria-label="Close image" className="p-2 text-white bg-black bg-opacity-20 rounded">
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-
-          <div className="absolute left-4">
-            <button onClick={(e) => { e.stopPropagation(); prevLightbox(); }} aria-label="Previous image" className="p-2 text-white bg-black bg-opacity-20 rounded">
-              <ChevronLeft className="w-6 h-6" />
-            </button>
-          </div>
-
-          <div className="relative max-w-[90vw] max-h-[90vh] p-4" onClick={(e) => e.stopPropagation()}>
-            <img src={lightboxImages[lightboxIndex]} alt={`Image ${lightboxIndex + 1}`} className="max-w-full max-h-[80vh] object-contain rounded shadow-lg bg-white" />
-          </div>
-
-          <div className="absolute right-4">
-            <button onClick={(e) => { e.stopPropagation(); nextLightbox(); }} aria-label="Next image" className="p-2 text-white bg-black bg-opacity-20 rounded">
-              <ChevronRight className="w-6 h-6" />
-            </button>
-          </div>
-        </div>
-      )}
+      <Lightbox open={lightboxOpen} images={lightboxImages} index={lightboxIndex} onClose={closeLightbox} onPrev={prevLightbox} onNext={nextLightbox} />
     </div>
   );
 }

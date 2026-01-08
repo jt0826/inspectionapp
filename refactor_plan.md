@@ -2,8 +2,8 @@
 
 **Status update (2026-01-08):**
 - Major refactor steps completed: navigation, inspections, venues extraction into hooks; `InspectionContext` implemented and wired; `VenueContext` implemented and wired; replaced global `window` events with context-driven refreshes; updated UI for loading states (VenueSelection, delete confirmation computing). Builds pass and docs were added (`docs/inspection-context.md`, `docs/venue-context.md`).
-- Phase 5.1 is now implemented: image upload handling extracted into `src/utils/imageApi.ts`, image list/sign/register flows replaced inline calls, venue/room persist logic moved into `useInspections`, and `getInspectionItemsForRoom` added to `inspectionApi`. Loading overlays were verified and `VenueSelection` now uses the inspection creation helper from context. Vitest tests were added for `imageApi` and `inspectionApi` and pass locally.
-- Next priorities: add unit tests for contexts/hooks (high priority), split `InspectionForm` into subcomponents (Phase 5.2), implement client-side idempotency keys for saves/uploads (Phase 6), and prepare a PR for review.
+- Phase 5.1 is now implemented: image upload handling extracted into `src/utils/imageApi.ts`, image list/sign/register flows replaced inline calls, venue/room persist logic moved into `useInspections`, and `getInspectionItemsForRoom` added to `inspectionApi`. Loading overlays were verified and `VenueSelection` now uses the inspection creation helper from context. Vitest tests were added for `imageApi` and `inspectionApi` and passed locally. Additionally, the test environment has been configured (added `vitest.config.ts` and `test/vitest.setup.ts`) to run Vitest with the `jsdom` environment and register `@testing-library/jest-dom` matchers; all current unit and component tests pass locally.
+- Next priorities: Phase 5.2 is in progress: `InspectionForm` has been split into subcomponents and Header/Progress component tests have been added and are passing. Continue adding unit tests for `InspectionItemCard` (in-progress), `PhotoGrid`, `Lightbox`, and contexts/hooks (high priority). After tests are green, implement client-side idempotency keys for saves/uploads (Phase 6), finalize any type-safety cleanup, and prepare a PR for review.
 
 This checklist is organized by priority and includes specific file references, line numbers, and implementation guidance.
 
@@ -654,6 +654,8 @@ Next steps (follow-up work) ➕
     - Photo display and upload UI
 5. **`src/components/inspection/Lightbox.tsx`** (lines 883-915)
     - Image lightbox modal
+
+**Tests & status:** Header and Progress component tests have been added and are passing. The test environment fix (Vitest + jsdom) was implemented via `vitest.config.ts` and `test/vitest.setup.ts`. Remaining component tests: `InspectionItemCard` (in-progress), `PhotoGrid`, and `Lightbox` (planned).
 
 **Keep in InspectionForm.tsx:**
 

@@ -15,7 +15,7 @@ Frontend (TypeScript) → API Gateway → Lambda (Python) → DynamoDB
 - [Refactor Plan](./refactor_plan.md) - Rationale and steps for recent codebase improvements
 - [API info](./src/config/api.ts) - Centralized API endpoint definitions - comments are inlined
 - As needed, refer to individual file comments and docstrings for implementation details.
-- [VERY IMPORTANT - PLEASE READ] Before and after writing any code, please refer to the above documents to ensure alignment with architecture and conventions. If working on the refactor plan, please follow the outlined steps closely, and update which sections have been completed. If there are any significant changes to architechture, please update the architecture diagram as well. Please clarify if there are any ambiguities.
+- ***___[!VERY IMPORTANT - PLEASE READ]___*** Before and after writing any code, please refer to the above documents to ensure alignment with architecture and conventions. If working on the refactor plan, please follow the outlined steps closely, and update which sections have been completed. If there are any significant changes to architechture, please update the architecture diagram as well. Please clarify if there are any ambiguities.
 
 ### DynamoDB Tables
 - `InspectionMetadata` - inspection headers (PK: `inspectionId`)
