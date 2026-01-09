@@ -31,8 +31,24 @@ import { defaultInspectionItems } from '../config/defaults';
 
 const makePhotoId = () => generatePhotoId();
 
+// Raw item shape returned by some APIs or venue definitions
+type RawInspectionItem = {
+  id?: string;
+  itemId?: string;
+  ItemId?: string;
+  itemName?: string;
+  item?: string;
+  ItemName?: string;
+  name?: string;
+  status?: string;
+  photos?: any[];
+  comments?: string;
+  notes?: string;
+  [k: string]: any;
+};
+
 // Ensure any incoming item-like object is normalized to the InspectionItem shape
-const normalizeItem = (it: any): InspectionItem => ({
+const normalizeItem = (it: RawInspectionItem): InspectionItem => ({
   id: it.id || it.itemId || it.ItemId || generateItemId(),
   name: it.itemName || it.item || it.ItemName || it.name || '',
   status: (it.status || 'pending') as any,

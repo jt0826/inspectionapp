@@ -82,25 +82,25 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection, onR
   }, [sourceInspections]);
 
   // Normalize inspections from server to the home / card shape. This means ensuring totals and updatedAt/updatedBy are present.
-  const normalize = (rec: any) => {
+  const normalize = (rec: RawInspection) => {
     if (!rec) return null as any;
 
     // Map canonical fields from the monolithic JSON returned by inspections-query
     const id = String(rec.id || rec.inspection_id || '');
     const venueName = String(rec.venueName || rec.venue_name || rec.venue || '');
     const roomName = String(rec.roomName || rec.room_name || rec.room || '');
-    const inspectorName = String(rec.createdBy || rec.created_by || '');
+    const inspectorName = String(rec.createdBy || (rec as any).created_by || '');
 
     // Prefer explicit timestamps from the server
     const updatedAt = rec.updatedAt || '';
-    const completedAt = (rec.completedAt || rec.completed_at || rec.completedTimestamp) || '';
+    const completedAt = (rec.completedAt || rec.completed_at || (rec as any).completedTimestamp) || '';
     const timestamp = rec.timestamp || rec.createdAt || rec.created_at || rec.updatedAt || '';
 
     // Totals should be provided by the server; default to zeros but warn if missing
-    const totals = (rec.totals && typeof rec.totals === 'object') ? { pass: rec.totals.pass ?? 0, fail: rec.totals.fail ?? 0, na: rec.totals.na ?? 0, total: rec.totals.total ?? 0 } : { pass: 0, fail: 0, na: 0, total: 0 };
-    if (!rec.totals) console.warn(`Inspection ${id} missing totals in server payload`);
+    const totals = (rec.totals && typeof rec.totals === 'object') ? { pass: (rec.totals as any).pass ?? 0, fail: (rec.totals as any).fail ?? 0, na: (rec.totals as any).na ?? 0, total: (rec.totals as any).total ?? 0 } : { pass: 0, fail: 0, na: 0, total: 0 };
+    if (!(rec as any).totals) console.warn(`Inspection ${id} missing totals in server payload`);
     // Only warn about missing completedAt if the server claims the inspection is completed
-    const recStatus = String(rec.status || rec.state || '').toLowerCase();
+    const recStatus = String((rec as any).status || (rec as any).state || '').toLowerCase();
     if (recStatus === 'completed' && !completedAt) console.warn(`Inspection ${id} missing completedAt in server payload`);
 
     const items = Array.isArray(rec.items) ? rec.items : [];

@@ -14,6 +14,32 @@ import { formatDateTime as formatDate } from '../utils/date';
 
 import type { Venue, Room } from '../types/venue';
 
+// Raw server payload for inspections (tolerant shape)
+type RawInspection = {
+  id?: string;
+  inspection_id?: string;
+  venueId?: string;
+  venueName?: string;
+  venue_name?: string;
+  roomId?: string;
+  roomName?: string;
+  room_name?: string;
+  createdBy?: string;
+  created_at?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  updated_at?: string;
+  timestamp?: string;
+  completedAt?: string;
+  completed_at?: string;
+  completed?: boolean;
+  totals?: Record<string, number> | null;
+  byRoom?: any;
+  items?: any[];
+  status?: string;
+  [key: string]: any;
+};
+
 type CompletionResult = { complete?: boolean; missing?: unknown[]; total_expected?: number };
 
 interface InspectorHomeProps {
@@ -42,7 +68,7 @@ export function InspectorHome({
   const { user, logout } = useAuth();
   const propsVenues = venues || [];
 
-  const [dynamoInspections, setDynamoInspections] = useState<Record<string, unknown>[]>([]);
+  const [dynamoInspections, setDynamoInspections] = useState<RawInspection[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingIds, setDeletingIds] = useState<string[]>([]);
   const [venuesMap, setVenuesMap] = useState<Record<string, string>>({});
@@ -83,7 +109,7 @@ export function InspectorHome({
 
       const data = await response.json();
       // API Gateway proxy integration often returns { statusCode, body }
-      let inspectionsArray: Record<string, unknown>[] = [];
+      let inspectionsArray: RawInspection[] = [];
 
       // Normalized parsing
       if (Array.isArray(data.inspections)) {

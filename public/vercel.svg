@@ -1,1 +1,11 @@
-<svg fill="none" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1155 1000"><path d="m577.3 0 577.4 1000H0z" fill="#fff"/></svg>
+<svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Outer inspection frame -->
+  <rect x="12" y="12" width="96" height="96" rx="16" stroke="currentColor" stroke-width="6"></rect>
+
+  <!-- Checklist divider lines -->
+  <line x1="32" y1="44" x2="88" y2="44" stroke="currentColor" stroke-width="4" stroke-linecap="round"></line>
+  <line x1="32" y1="64" x2="72" y2="64" stroke="currentColor" stroke-width="4" stroke-linecap="round"></line>
+
+  <!-- Pass checkmark -->
+  <path d="M38 78 L54 92 L82 60" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
