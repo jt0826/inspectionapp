@@ -68,7 +68,7 @@ def handle_list_inspections(event_body: dict, debug):
     Performance: Single GSI query + scan for ongoing, <100ms typical response time
     """
     try:
-        # Parse client-requested completed limit
+        # Parse client-requested completed limit, client can override default limit
         completed_limit = DEFAULT_COMPLETED_LIMIT
         if isinstance(event_body, dict):
             limit_raw = event_body.get('completed_limit') or event_body.get('completedLimit')
