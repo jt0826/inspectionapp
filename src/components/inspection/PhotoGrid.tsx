@@ -8,7 +8,7 @@ interface PhotoGridProps {
   isBusy: boolean;
   onRemovePhoto: (index: number) => void;
   onOpenLightbox: (images: string[], idx: number) => void;
-  onChooseFile: (file: File) => void;
+  onChooseFile: (file: File) => void; // Called once per file when multiple files selected
   onTakePhoto: (file: File) => void;
 }
 
@@ -92,15 +92,16 @@ export default function PhotoGrid({ photos, itemName, isReadOnly, isBusy, onRemo
             <input
               type="file"
               accept="image/*"
+              multiple
               onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  onChooseFile(file);
+                const files = Array.from(e.target.files || []);
+                if (files.length > 0) {
+                  files.forEach(file => onChooseFile(file));
                   e.target.value = '';
                 }
               }}
               className="hidden"
-              aria-label={`Choose photo for ${itemName}`}
+              aria-label={`Choose photos for ${itemName}`}
             />
           </label>
         </div>
