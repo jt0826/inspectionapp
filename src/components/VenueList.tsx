@@ -9,6 +9,7 @@ import type { Inspection } from '../types/inspection';
 import { getVenues } from '../utils/venueApi';
 import { useInspectionContext } from '../contexts/InspectionContext';
 import LoadingOverlay from './LoadingOverlay';
+import { formatDateTime as formatDate } from '../utils/date';
 
 interface VenueListProps {
   venues: Venue[];

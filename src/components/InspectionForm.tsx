@@ -27,23 +27,7 @@ interface InspectionFormProps {
   readOnly?: boolean;
 }
 
-const defaultInspectionItems: Omit<InspectionItem, 'status' | 'notes' | 'photos'>[] = [
-  { id: '1', name: 'Fire extinguisher present and accessible' },
-  { id: '2', name: 'Emergency exit signs illuminated' },
-  { id: '3', name: 'Exit paths clear and unobstructed' },
-  { id: '4', name: 'First aid kit available' },
-  { id: '5', name: 'Floors clean and free of debris' },
-  { id: '6', name: 'Walls and surfaces clean' },
-  { id: '7', name: 'No signs of pests or infestation' },
-  { id: '8', name: 'Lighting functional' },
-  { id: '9', name: 'HVAC system operational' },
-  { id: '10', name: 'Doors and locks functioning properly' },
-  { id: '11', name: 'Windows intact and clean' },
-  { id: '12', name: 'Furniture in good condition' },
-  { id: '13', name: 'Electrical outlets functional' },
-  { id: '14', name: 'ADA accessibility requirements met' },
-  { id: '15', name: 'Required signage posted' },
- ];
+import { defaultInspectionItems } from '../config/defaults';
 
 const makePhotoId = () => generatePhotoId();
 

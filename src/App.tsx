@@ -26,51 +26,12 @@ import { getVenueById } from './utils/venueApi';
 import type { Venue, Room } from './types/venue';
 import type { Inspection, InspectionItem, Photo } from './types/inspection';
 
-const mockVenues: Venue[] = [
-  {
-    id: 'v1',
-    name: 'Downtown Office Complex',
-    address: '123 Main Street',
-    rooms: [
-      { id: 'r1', name: 'Conference Room A', items: [{ id: 'i1', name: 'Extinguisher' }] },
-      { id: 'r2', name: 'Conference Room B', items: [{ id: 'i2', name: 'Projector' }] },
-      { id: 'r3', name: 'Main Lobby', items: [] },
-      { id: 'r4', name: 'Restroom 1F', items: [] },
-      { id: 'r5', name: 'Kitchen', items: [{ id: 'i3', name: 'First Aid Kit' }] },
-    ],
-    createdAt: '2023-01-01T12:00:00Z',
-    updatedAt: '2023-01-01T12:00:00Z',
-    createdBy: 'admin',
-  },
-  {
-    id: 'v2',
-    name: 'Westside Community Center',
-    address: '456 Oak Avenue',
-    rooms: [
-      { id: 'r6', name: 'Gymnasium', items: [] },
-      { id: 'r7', name: 'Multi-purpose Room', items: [] },
-      { id: 'r8', name: 'Storage', items: [] },
-      { id: 'r9', name: 'Restroom 2F', items: [] },
-    ],
-    createdAt: '2023-01-01T12:00:00Z',
-    updatedAt: '2023-01-01T12:00:00Z',
-    createdBy: 'admin',
-  },
-  {
-    id: 'v3',
-    name: 'Tech Hub East',
-    address: '789 Innovation Drive',
-    rooms: [
-      { id: 'r10', name: 'Open Workspace', items: [] },
-      { id: 'r11', name: 'Private Office 1', items: [] },
-      { id: 'r12', name: 'Break Room', items: [] },
-      { id: 'r13', name: 'Server Room', items: [] },
-    ],
-    createdAt: '2023-01-01T12:00:00Z',
-    updatedAt: '2023-01-01T12:00:00Z',
-    createdBy: 'admin',
-  },
-];
+// Raw DB payload shapes used when mapping API responses to frontend types
+type RawItem = { itemId?: string; id?: string; name?: string; item?: string };
+type RawRoom = { roomId?: string; id?: string; name?: string; items?: RawItem[] };
+type RawVenue = { venueId?: string; id?: string; name?: string; address?: string; rooms?: RawRoom[]; createdAt?: string; updatedAt?: string; createdBy?: string };
+
+// mockVenues removed as dead code — venue data should come from `useVenues` / backend
 
 function AppContent() {
   const { isAuthenticated, user } = useAuth();
@@ -84,14 +45,14 @@ function AppContent() {
 
 
   // Map DB venue shape to frontend Venue type
-  const mapDbVenueToVenue = (v: any): Venue => ({
-    id: v.venueId || v.id,
+  const mapDbVenueToVenue = (v: RawVenue): Venue => ({
+    id: v.venueId || v.id || '',
     name: v.name || '',
     address: v.address || '',
-    rooms: (v.rooms || []).map((r: any) => ({
-      id: r.roomId || r.id,
+    rooms: (v.rooms || []).map((r: RawRoom) => ({
+      id: r.roomId || r.id || '',
       name: r.name || '',
-      items: (r.items || []).map((it: any) => ({ id: it.itemId || it.id, name: it.name || it.item || '' })),
+      items: (r.items || []).map((it: RawItem) => ({ id: it.itemId || it.id || '', name: it.name || it.item || '' })),
     })),
     createdAt: v.createdAt || '',
     updatedAt: v.updatedAt || v.createdAt || '',
@@ -109,13 +70,7 @@ function AppContent() {
   // NOTE: Database-sourced inspections are now fetched by `InspectorHome` to avoid duplicate network calls.
   // The App-level code no longer fetches `list_inspections` to prevent unnecessary duplication and reduce load.
 
-  const inspectionsCountMap = React.useMemo(() => {
-    return inspections.reduce((acc: Record<string, number>, i: any) => {
-      const vid = i.venueId || i.venue_id || i.venue;
-      if (vid) acc[vid] = (acc[vid] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
-  }, [inspections]);
+  // inspectionsCountMap removed — counts should be computed by the consumer view that needs them (e.g., InspectorHome)
   const [editingInspection, setEditingInspection] = useState<Inspection | null>(null);
   const [editingInspectionIndex, setEditingInspectionIndex] = useState<number | null>(null);
   // When true, user has initiated "Create New Inspection" but we haven't created it on the server yet

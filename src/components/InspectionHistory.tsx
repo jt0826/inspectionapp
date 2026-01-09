@@ -7,6 +7,7 @@ import LoadingOverlay from './LoadingOverlay';
 import type {Inspection} from '../types/inspection';
 import { getInspectionsPartitioned } from '../utils/inspectionApi';
 import InspectionCard from './InspectionCard';
+import { formatDateTime as formatDate } from '../utils/date';
 
 interface InspectionHistoryProps {
   inspections: Inspection[];
@@ -28,16 +29,6 @@ export function InspectionHistory({ inspections, onBack, onDeleteInspection, onR
   // history stays in sync after create/save/delete operations elsewhere in the app.
   const { refreshKey } = useInspectionContext();
 
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleString('en-GB', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
 
 
 

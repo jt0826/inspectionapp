@@ -10,6 +10,7 @@ import { useInspectionContext } from '../contexts/InspectionContext';
 import FadeIn from 'react-fade-in';
 import LoadingOverlay from './LoadingOverlay';
 import { API } from '../config/api';
+import { formatDateTime as formatDate } from '../utils/date';
 
 import type { Venue, Room } from '../types/venue';
 
@@ -306,18 +307,7 @@ export function InspectorHome({
     return new Date(bTs).getTime() - new Date(aTs).getTime();
   });
 
-  const formatDate = (dateString?: unknown) => {
-    if (!dateString) return '';
-    const date = new Date(String(dateString));
-    if (isNaN(date.getTime())) return String(dateString);
-    return date.toLocaleString('en-GB', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
+
 
   type Summary = { totals?: { pass?: number; fail?: number; na?: number; pending?: number; total?: number }; byRoom?: Record<string, any>; updatedAt?: string | null; updatedBy?: string | null };
   const getSummary = (id?: string): Summary | undefined => {

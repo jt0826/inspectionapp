@@ -3,7 +3,7 @@
 **Status update (2026-01-08):**
 - Major refactor steps completed: navigation, inspections, venues extraction into hooks; `InspectionContext` implemented and wired; `VenueContext` implemented and wired; replaced global `window` events with context-driven refreshes; updated UI for loading states (VenueSelection, delete confirmation computing). Builds pass and docs were added (`docs/inspection-context.md`, `docs/venue-context.md`).
 - Phase 5.1 is now implemented: image upload handling extracted into `src/utils/imageApi.ts`, image list/sign/register flows replaced inline calls, venue/room persist logic moved into `useInspections`, and `getInspectionItemsForRoom` added to `inspectionApi`. Loading overlays were verified and `VenueSelection` now uses the inspection creation helper from context. Vitest tests were added for `imageApi` and `inspectionApi` and passed locally. Additionally, the test environment has been configured (added `vitest.config.ts` and `test/vitest.setup.ts`) to run Vitest with the `jsdom` environment and register `@testing-library/jest-dom` matchers; all current unit and component tests pass locally.
-- Next priorities: Phase 5.2 is in progress: `InspectionForm` has been split into subcomponents and Header/Progress component tests have been added and are passing. Continue adding unit tests for `InspectionItemCard` (in-progress), `PhotoGrid`, `Lightbox`, and contexts/hooks (high priority). After tests are green, implement client-side idempotency keys for saves/uploads (Phase 6), finalize any type-safety cleanup, and prepare a PR for review.
+- Next priorities: Phase 5.2 is in progress: `InspectionForm` has been split into subcomponents and Header/Progress component tests have been added and are passing. Continue adding unit tests for `InspectionItemCard` (completed), `PhotoGrid` (completed), `Lightbox` (completed), and contexts/hooks (completed). Phase 6 (idempotency) is on hold while the user prepares the commit & PR personally; the immediate next focus is **Phase 7: Cleanup Tasks** (now in-progress). Once the PR is created and merged, we will resume Phase 6.
 
 This checklist is organized by priority and includes specific file references, line numbers, and implementation guidance.
 
@@ -668,19 +668,17 @@ Next steps (follow-up work) ➕
 
 ## Phase 6: Add Idempotency
 
-### 6.1 Client-Side Idempotency Keys
+**Status: ON HOLD — The user will create the commit & PR for Phase 5 first; Phase 6 will be resumed after the PR is merged.**
+
+### 6.1 Client-Side Idempotency Keys (on hold)
 
 **File:** InspectionForm.tsx
 
-**Current `handleSubmit` (line 289):**
+**Summary:** Generate and include an idempotency key for `handleSubmit` and include it on all requests to allow the backend to deduplicate repeated submission attempts. Backend support is required to honor `X-Idempotency-Key` and reject duplicates within a time window (e.g., 5 minutes).
 
-```tsx
-const handleSubmit = async () => {
-  if (submittingRef.current) return;
-  submittingRef.current = true;
-  // ...
+> Note: Implementation of Phase 6 is deferred until after the Phase 5 PR is opened and merged. Once resumed, follow the idempotency key pattern described below.
 
-```
+**(Implementation details — to be applied when resumed)**
 
 **Add idempotency key:**
 
@@ -705,7 +703,7 @@ const handleSubmit = async () => {
 
 ---
 
-### 6.2 Image Upload Idempotency
+### 6.2 Image Upload Idempotency (on hold)
 
 **File:** InspectionForm.tsx
 
@@ -738,26 +736,30 @@ body: JSON.stringify({
 
 ---
 
+**When to resume:** After the Phase 5 PR is created and merged, unmark the 'ON HOLD' note and implement idempotency changes as described above.
+
 ## Phase 7: Cleanup Tasks
 
-### 7.1 Remove Dead Code
+### 7.1 Remove Dead Code (IN PROGRESS / PARTIAL)
 
 | File | Lines | What | Action |
 | --- | --- | --- | --- |
-| App.tsx | 65-101 | `mockVenues` array | Delete - never used |
-| App.tsx | 157-163 | `inspectionsCountMap` | Delete - never used in render |
-| App.tsx | 128 | `API_BASE` variable | Delete after centralization |
-| InspectionForm.tsx | 21-36 | `defaultInspectionItems` | Move to `src/config/defaults.ts` |
+| App.tsx | 19-64 | `mockVenues` array | **Removed** — venue data is supplied by `useVenues` / backend (done) ✅ |
+| App.tsx | 94-102 | `inspectionsCountMap` | **Removed** — counts should be computed by consumer views as needed (done) ✅ |
+| App.tsx | 128 | `API_BASE` variable | Delete after centralization (already migrated to `src/config/api.ts`) ✅ |
+| InspectionForm.tsx | 21-36 | `defaultInspectionItems` | **Moved** to `src/config/defaults.ts` and imported from there (done) ✅ |
 
 ---
 
-### 7.2 Fix Type Safety
+### 7.2 Fix Type Safety (IN PROGRESS)
 
 | File | Lines | Current | Fix |
 | --- | --- | --- | --- |
-| App.tsx | 131 | `(v: any)` | `(v: RawVenue)` - define `RawVenue` type |
-| InspectorHome.tsx | 46 | `Record<string, unknown>[]` | `RawInspection[]` |
-| InspectionForm.tsx | 168 | `(it: any)` | `(it: RawInspectionItem)` |
+| App.tsx | 131 | `(v: any)` | **Converted** to `(v: RawVenue)` and added `RawVenue`/`RawRoom`/`RawItem` types (partial, done) ✅ |
+| InspectorHome.tsx | 46 | `Record<string, unknown>[]` | Plan: introduce `RawInspection` and replace loose `any` shapes with typed aliases (next) ⚠️ |
+| InspectionForm.tsx | 168 | `(it: any)` | Plan: introduce `RawInspectionItem` type and replace untyped params (next) ⚠️ |
+
+Notes: initial type-safety changes completed in `App.tsx`. Remaining files will be updated incrementally to keep changes small and reviewable.
 
 ---
 

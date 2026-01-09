@@ -12,18 +12,7 @@ const pick = (rec: Record<string, unknown> | null | undefined, ...keys: string[]
   return '';
 };
 
-const formatDate = (dateString?: unknown) => {
-  if (!dateString) return '';
-  const date = new Date(String(dateString));
-  if (isNaN(date.getTime())) return String(dateString);
-  return date.toLocaleString('en-GB', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-};
+import { formatDateTime as formatDate } from '../utils/date';
 
 type Summary = { totals?: { pass?: number; fail?: number; na?: number; pending?: number; total?: number }; updatedAt?: string | null; updatedBy?: string | null };
 
