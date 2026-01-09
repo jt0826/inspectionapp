@@ -87,6 +87,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
 
   // Server-driven read-only state (for inspectionId-only flows)
   const [serverReadOnly, setServerReadOnly] = useState<boolean>(false);
+  const [checkingServerStatus, setCheckingServerStatus] = useState<boolean>(false);
 
   // Read-only when explicitly requested OR when the inspection is already completed
   const isReadOnly = Boolean(readOnly || (existingInspection && ((existingInspection.status && String(existingInspection.status).toLowerCase() === 'completed') || (existingInspection as any).completedAt)) || serverReadOnly);
@@ -216,6 +217,7 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
     const loadSaved = async () => {
       if (!inspectionId) return;
       setLoadingSaved(true);
+      setCheckingServerStatus(true);
       try {
         // Also check the inspection metadata from the server to derive read-only status
         try {
@@ -224,9 +226,9 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
             const found = list.find((i: any) => (i.inspection_id || i.id) === inspectionId || i.id === inspectionId);
             if (found) {
               const s = (found.status || '') as string;
-              if (s && s.toString().toLowerCase() === 'completed') {
-                setServerReadOnly(true);
-              } else if ((found as any).completedAt || (found as any).completed_at) {
+              const hasCompletedAt = Boolean((found as any).completedAt || (found as any).completed_at);
+              // Check both status and completedAt for consistency
+              if ((s && s.toString().toLowerCase() === 'completed') || hasCompletedAt) {
                 setServerReadOnly(true);
               }
             }
@@ -234,6 +236,8 @@ export function InspectionForm({ venue, room, onBack, onSubmit, existingInspecti
         } catch (e) {
           // ignore failures to fetch metadata - fallback behavior remains
           // console.warn('Failed to fetch inspections metadata for read-only check', e);
+        } finally {
+          setCheckingServerStatus(false);
         }
 
         try {

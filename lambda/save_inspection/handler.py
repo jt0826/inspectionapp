@@ -12,6 +12,15 @@ def handle_save_inspection(event_body: dict, debug):
     if not inspection_id:
         return build_response(400, {'message': 'inspection_id is required'})
 
+    # Server-side protection: prevent modification of completed inspections
+    k, existing_meta = read_inspection_metadata(inspection_id)
+    if existing_meta:
+        existing_status = (existing_meta.get('status') or '').lower()
+        has_completed_at = existing_meta.get('completedAt') or existing_meta.get('completed_at')
+        if existing_status == 'completed' or has_completed_at:
+            debug(f'save_inspection: rejected attempt to modify completed inspection={inspection_id}')
+            return build_response(403, {'message': 'Cannot modify completed inspection', 'inspection_id': inspection_id})
+
     now = _now_local_iso()
 
     # If no items were provided, do a metadata upsert

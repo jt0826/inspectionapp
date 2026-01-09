@@ -377,30 +377,19 @@ export function useAppHandlers(options: UseAppHandlersOptions) {
     selectRoom(room);
 
     if (currentInspectionId) {
-      // Find the inspection with flexible ID matching (handles various formats)
-      const existing = inspections.find(
-        (i) =>
-          (i as any).id === currentInspectionId ||
-          (i as any).inspection_id === currentInspectionId ||
-          (i as any).inspectionId === currentInspectionId
-      );
-      const existingRoomId = existing?.roomId || (existing as any)?.room_id || (existing as any)?.room || null;
-
-      // If already on this room, just update read-only state and return
-      if (existing && String(existingRoomId || '') === String(room.id)) {
-        setInspectionReadOnly(
-          Boolean(existing && String((existing as any).status || '').toLowerCase() === 'completed')
-        );
-        return;
-      }
-
       // Update inspection with new room
       setRoomForCurrentInspection(room);
 
-      // Determine read-only state
+      // Determine read-only state (check both status and completedAt for consistency)
       try {
-        const insp = inspections.find((i) => i.id === currentInspectionId) || existing;
-        setInspectionReadOnly(Boolean(insp && String(insp.status || '').toLowerCase() === 'completed'));
+        const insp = inspections.find((i) => i.id === currentInspectionId);
+        if (insp) {
+          const isCompleted = String(insp.status || '').toLowerCase() === 'completed';
+          const hasCompletedAt = Boolean((insp as any).completedAt || (insp as any).completed_at);
+          setInspectionReadOnly(isCompleted || hasCompletedAt);
+        } else {
+          setInspectionReadOnly(false);
+        }
       } catch (e) {
         setInspectionReadOnly(false);
       }
@@ -642,8 +631,10 @@ export function useAppHandlers(options: UseAppHandlersOptions) {
 
     selectInspection(id);
     
-    // Completed inspections are read-only
-    setInspectionReadOnly((simpleInspection.status || '').toString().toLowerCase() === 'completed');
+    // Completed inspections are read-only (check both status and completedAt for consistency)
+    const isCompleted = (simpleInspection.status || '').toString().toLowerCase() === 'completed';
+    const hasCompletedAt = Boolean(incoming.completedAt || incoming.completed_at);
+    setInspectionReadOnly(isCompleted || hasCompletedAt);
 
     // Resolve venue and room
     const venue = venues.find((v) => v.id === simpleInspection.venueId);
@@ -804,10 +795,16 @@ export function useAppHandlers(options: UseAppHandlersOptions) {
    * @returns void
    */
   const handleBackFromInspection = useCallback(() => {
-    // Update read-only state based on current inspection
+    // Update read-only state based on current inspection (check both status and completedAt)
     if (currentInspectionId) {
       const insp = inspections.find((i) => i.id === currentInspectionId);
-      setInspectionReadOnly(Boolean(insp && String(insp.status || '').toLowerCase() === 'completed'));
+      if (insp) {
+        const isCompleted = String(insp.status || '').toLowerCase() === 'completed';
+        const hasCompletedAt = Boolean((insp as any).completedAt || (insp as any).completed_at);
+        setInspectionReadOnly(isCompleted || hasCompletedAt);
+      } else {
+        setInspectionReadOnly(false);
+      }
     } else {
       setInspectionReadOnly(false);
     }
