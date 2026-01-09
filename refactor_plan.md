@@ -751,15 +751,15 @@ body: JSON.stringify({
 
 ---
 
-### 7.2 Fix Type Safety (IN PROGRESS)
+### 7.2 Fix Type Safety (COMPLETE)
 
 | File | Lines | Current | Fix |
 | --- | --- | --- | --- |
-| App.tsx | 131 | `(v: any)` | **Converted** to `(v: RawVenue)` and added `RawVenue`/`RawRoom`/`RawItem` types (partial, done) ✅ |
-| InspectorHome.tsx | 46 | `Record<string, unknown>[]` | Plan: introduce `RawInspection` and replace loose `any` shapes with typed aliases (next) ⚠️ |
-| InspectionForm.tsx | 168 | `(it: any)` | Plan: introduce `RawInspectionItem` type and replace untyped params (next) ⚠️ |
+| App.tsx | 131 | `(v: any)` | Converted to `(v: RawVenue)` and added `RawVenue`/`RawRoom`/`RawItem` types (done) ✅ |
+| InspectorHome.tsx | 46 | `Record<string, unknown>[]` | Introduced `RawInspection` and replaced loose `any` shapes where practical (done) ✅ |
+| InspectionForm.tsx | 168 | `(it: any)` | Introduced `RawInspectionItem` and typed `normalizeItem` (done) ✅ |
 
-Notes: initial type-safety changes completed in `App.tsx`. Remaining files will be updated incrementally to keep changes small and reviewable.
+Notes: Type-safety improvements applied incrementally to minimize review size; further refinements can be made in follow-up CLs if desired.
 
 ---
 

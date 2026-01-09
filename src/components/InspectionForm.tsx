@@ -32,7 +32,7 @@ import { defaultInspectionItems } from '../config/defaults';
 const makePhotoId = () => generatePhotoId();
 
 // Raw item shape returned by some APIs or venue definitions
-type RawInspectionItem = {
+export type RawInspectionItem = {
   id?: string;
   itemId?: string;
   ItemId?: string;

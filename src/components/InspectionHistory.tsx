@@ -8,6 +8,7 @@ import type {Inspection} from '../types/inspection';
 import { getInspectionsPartitioned } from '../utils/inspectionApi';
 import InspectionCard from './InspectionCard';
 import { formatDateTime as formatDate } from '../utils/date';
+import type {RawInspection}from './InspectorHome';
 
 interface InspectionHistoryProps {
   inspections: Inspection[];

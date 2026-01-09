@@ -15,24 +15,17 @@ import { formatDateTime as formatDate } from '../utils/date';
 import type { Venue, Room } from '../types/venue';
 
 // Raw server payload for inspections (tolerant shape)
-type RawInspection = {
+export type RawInspection = {
   id?: string;
-  inspection_id?: string;
   venueId?: string;
   venueName?: string;
-  venue_name?: string;
   roomId?: string;
   roomName?: string;
-  room_name?: string;
   createdBy?: string;
-  created_at?: string;
   createdAt?: string;
   updatedAt?: string;
-  updated_at?: string;
   timestamp?: string;
   completedAt?: string;
-  completed_at?: string;
-  completed?: boolean;
   totals?: Record<string, number> | null;
   byRoom?: any;
   items?: any[];
