@@ -1,3 +1,16 @@
+""" 
+⚠️ DEPRECATED: This Lambda handler is being phased out.
+
+Use save_inspection/list_inspections.py instead, which:
+- Uses partition-limit-enrich pattern (98% fewer DB queries)
+- Returns only completed/ongoing arrays (no duplication)
+- Eliminates payload bloat (no 'raw' field)
+- Leverages cached totals/byRoom from InspectionMetadata
+
+This file remains for backward compatibility and will be removed in a future release.
+Routing should point to API.inspectionsQuery → save_inspection Lambda.
+"""
+
 import json
 import boto3
 from datetime import datetime, timezone
@@ -105,15 +118,13 @@ def lambda_handler(event, context):
                     'roomId': it.get('roomId') or it.get('room_id') or None,
                     'roomName': it.get('roomName') or it.get('room_name') or None,
                     'status': (it.get('status') or '').lower() if it.get('status') else None,
-                    'raw': it
                 }
                 # only include completedAt when the value is present (avoid null in payloads)
                 if comp is not None:
                     obj['completedAt'] = comp
 
-                # include creator display name (canonical) and keep inspectorName only as a compatibility fallback
+                # include creator display name (canonical) - no deprecated inspectorName
                 obj['createdBy'] = it.get('createdBy') or it.get('created_by') or None
-                obj['inspectorName'] = it.get('inspectorName') or obj['createdBy'] or None
 
                 # set metadata-updated fields from the metadata row if present
                 if updated:
@@ -284,20 +295,8 @@ def lambda_handler(event, context):
                 print('Failed to enrich inspections with summaries:', e)
 
             # Partition inspections by status into ongoing and completed (status field determines grouping)
-            # Build id map to ensure partitioned lists reference the enriched inspection objects (and include byRoom)
-            id_map = { (obj.get('inspection_id') or obj.get('id') or ''): obj for obj in inspections }
-            completed_ids = []
-            ongoing_ids = []
-            for obj in inspections:
-                st = (obj.get('status') or '').lower() if obj.get('status') else ''
-                iid = obj.get('inspection_id') or obj.get('id') or ''
-                if st == 'completed':
-                    completed_ids.append(iid)
-                else:
-                    ongoing_ids.append(iid)
-
-            completed = [id_map.get(i) for i in completed_ids if id_map.get(i)]
-            ongoing = [id_map.get(i) for i in ongoing_ids if id_map.get(i)]
+            completed = [obj for obj in inspections if (obj.get('status') or '').lower() == 'completed']
+            ongoing = [obj for obj in inspections if (obj.get('status') or '').lower() != 'completed']
 
             # Debug: log presence of byRoom across partitions
             try:

@@ -92,7 +92,7 @@ export function InspectorHome({
   const fetchInspections = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch(API.inspectionsQuery, {
+      const response = await fetch(API.inspections, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

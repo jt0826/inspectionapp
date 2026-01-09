@@ -2,10 +2,10 @@ import { API } from '../config/api';
 
 export async function getInspectionSummary(inspectionId: string) {
   if (!inspectionId) return null;
-  // Consolidated inspections query endpoint — expect JSON response with body containing summary
+  // Use save_inspection Lambda for summary action
 
   try {
-    const res = await fetch(API.inspectionsQuery, {
+    const res = await fetch(API.inspections, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'get_inspection_summary', inspection_id: inspectionId }),
@@ -13,7 +13,7 @@ export async function getInspectionSummary(inspectionId: string) {
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      console.warn('getInspectionSummary non-ok', res.status, text, API.inspectionsQuery);
+      console.warn('getInspectionSummary non-ok', res.status, text, API.inspections);
       return null;
     }
 
@@ -191,7 +191,7 @@ export async function deleteImageByDbEntry({ inspectionId, roomId, itemId, image
 
 export async function getInspections() {
   try {
-    const res = await fetch(API.inspectionsQuery, {
+    const res = await fetch(API.inspections, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'list_inspections' }),
@@ -199,7 +199,7 @@ export async function getInspections() {
 
     if (!res.ok) {
       const txt = await res.text().catch(() => '');
-      console.warn('getInspections non-ok', res.status, txt, API.inspectionsQuery);
+      console.warn('getInspections non-ok', res.status, txt, API.inspections);
       return [];
     }
 
@@ -233,7 +233,7 @@ export async function getInspectionsPartitioned(opts?: { completedLimit?: number
   try {
     const bodyPayload: any = { action: 'list_inspections' };
     if (opts && typeof opts.completedLimit !== 'undefined') bodyPayload.completed_limit = opts.completedLimit;
-    const res = await fetch(API.inspectionsQuery, {
+    const res = await fetch(API.inspections, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(bodyPayload),
@@ -241,7 +241,7 @@ export async function getInspectionsPartitioned(opts?: { completedLimit?: number
 
     if (!res.ok) {
       const text = await res.text().catch(() => '');
-      console.warn('getInspectionsPartitioned non-ok', res.status, text, API.inspectionsQuery);
+      console.warn('getInspectionsPartitioned non-ok', res.status, text, API.inspections);
       return null;
     }
 

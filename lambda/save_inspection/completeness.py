@@ -6,6 +6,14 @@ VENUE_ROOM_TABLE = 'VenueRooms'
 dynamodb = boto3.resource('dynamodb')
 
 
+def _convert_decimal(val):
+    """Convert Decimal to int for JSON serialization."""
+    from decimal import Decimal
+    if isinstance(val, Decimal):
+        return int(val) if val % 1 == 0 else float(val)
+    return val
+
+
 def check_inspection_complete(inspection_id: str, venue_id: str, debug=None):
     # load venue rooms/items
     vtable = dynamodb.Table(VENUE_ROOM_TABLE)
@@ -55,8 +63,8 @@ def check_inspection_complete(inspection_id: str, venue_id: str, debug=None):
             missing.append({'roomId': r, 'itemId': i, 'found': st})
             if debug:
                 debug(f"check_inspection_complete: inspection={inspection_id}, venue={venue_id}, expected_total={total_expected}, non_pass_found={{'roomId': r, 'itemId': i, 'status': st}}, pass_count={pass_count}")
-            return {'complete': False, 'missing': missing, 'total_expected': total_expected, 'completed_count': pass_count}
+            return {'complete': False, 'missing': missing, 'total_expected': _convert_decimal(total_expected), 'completed_count': _convert_decimal(pass_count)}
 
     if debug:
         debug(f"check_inspection_complete: inspection={inspection_id}, venue={venue_id}, all expected items PASS, total_expected={total_expected}, pass_count={pass_count}")
-    return {'complete': True, 'missing': [], 'total_expected': total_expected, 'completed_count': pass_count}
+    return {'complete': True, 'missing': [], 'total_expected': _convert_decimal(total_expected), 'completed_count': _convert_decimal(pass_count)}
