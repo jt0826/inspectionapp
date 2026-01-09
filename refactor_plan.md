@@ -865,7 +865,7 @@ export function formatDate(dateString?: string | null): string {
 |--------|--------|-------|-------------|
 | **Payload Size** | 10KB/inspection | 1KB/inspection | 90% reduction |
 | **DynamoDB Reads** | 500 queries | 1 GSI query + 1 scan | 98% reduction |
-| **Response Time** | 2-3 seconds | <100ms | 95% faster |
+| **Response Time** | 750 seconds | <500ms | 33% faster |
 | **Lambda Cost** | $0.50/1000 req | $0.10/1000 req | 80% savings |
 | **InspectorHome queries** | Queries all InspectionItems | Queries only metadata | 100% reduction |
 
