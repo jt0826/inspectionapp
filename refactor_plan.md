@@ -655,7 +655,7 @@ Next steps (follow-up work) ➕
 5. **`src/components/inspection/Lightbox.tsx`** (lines 883-915)
     - Image lightbox modal
 
-**Tests & status:** Header and Progress component tests have been added and are passing. The test environment fix (Vitest + jsdom) was implemented via `vitest.config.ts` and `test/vitest.setup.ts`. Remaining component tests: `InspectionItemCard` (in-progress), `PhotoGrid`, and `Lightbox` (planned).
+**Tests & status:** Header and Progress component tests have been added and are passing. The test environment fix (Vitest + jsdom) was implemented via `vitest.config.ts` and `test/vitest.setup.ts`. `InspectionItemCard` unit tests have been added and are passing. Remaining component tests: `PhotoGrid` (in-progress) and `Lightbox` (planned).
 
 **Keep in InspectionForm.tsx:**
 
